@@ -1,0 +1,21 @@
+{
+  "name": "hawalay-monorepo",
+  "private": true,
+  "description": "Hawalay — MERN (client + server workspaces)",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev:server": "cd server && nodemon server.js",
+    "dev:client": "cd client && vite",
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
+    "start:server": "npm run start -w hawalay-server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,155 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+
+/**
+ * Global styles + Stitch-derived utility classes.
+ * Color tokens: see `tailwind.config.js` (single source for Tailwind utilities).
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * CSS variables mirror tailwind.config.js named brand keys (same hex values as Stitch).
+ */
+:root {
+  --color-primary: #006c49;
+  --color-secondary: #006a61;
+  --color-accent: #e29100;
+  --color-surface: #f8f9fa;
+  --color-danger: #ba1a1a;
+  --color-success: #10b981;
+
+  --font-brand: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --font-material-symbols: 'Material Symbols Outlined';
+
+  --radius-card: 0.75rem;
+  --radius-card-inner: 0.5rem;
+  --radius-pill: 9999px;
+  --radius-message: 1rem;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-brand);
+  }
+
+  .material-symbols-outlined {
+    font-family: var(--font-material-symbols);
+    font-weight: normal;
+    font-style: normal;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 24;
+  }
+}
+
+/* login.html — .glass-panel (default), signUp uses same class with blur 16px under .register-page */
+@layer components {
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .register-page .glass-panel {
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  /* login.html — .floating-label-container */
+  .floating-label-container:focus-within label,
+  .floating-label-container input:not(:placeholder-shown) + label {
+    transform: translateY(-20px) scale(0.85);
+    color: #006c49;
+  }
+
+  /* signUp.html — .floating-label-group */
+  .floating-label-group:focus-within label,
+  .floating-label-group input:not(:placeholder-shown) + label {
+    transform: translateY(-24px) scale(0.85);
+    color: #006c49;
+  }
+
+  .register-page input:focus {
+    outline: none;
+    border-color: #006c49;
+  }
+
+  .container-app {
+    /* Stitch margin-mobile 20px + max-w-2xl main column */
+    @apply w-full max-w-2xl mx-auto px-[20px];
+  }
+
+  /* dashboard.html */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .custom-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+
+/* ai_match_results.html + real_time_chat.html utility classes */
+.premium-shadow {
+  box-shadow: 0 10px 30px -10px rgba(0, 108, 73, 0.15);
+}
+.active-chip {
+  background-color: #006c49;
+  color: #ffffff;
+}
+.glass-header {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.message-shadow {
+  box-shadow: 0 2px 4px rgba(0, 108, 73, 0.08);
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* item_details.html — .hide-scrollbar */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* user_profle.html — .glass-effect */
+.glass-effect {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+@layer utilities {
+  .transition-soft {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
