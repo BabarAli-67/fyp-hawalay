@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react';
 
-/**
- * Tracks browser online/offline for {@link ../components/ui/OfflineBanner.jsx}.
- * (Queue sync can be added here later for the MERN offline flow.)
- */
+/** Tracks {@link https://developer.mozilla.org/en-US/docs/Web/API/Navigator/onLine} for offline UI and queue flows. */
 export function useOfflineQueue() {
   const [isOnline, setIsOnline] = useState(
     () => (typeof navigator !== 'undefined' ? navigator.onLine : true),

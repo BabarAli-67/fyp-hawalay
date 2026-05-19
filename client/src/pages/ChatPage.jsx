@@ -121,7 +121,7 @@ export default function ChatPage() {
           <div>
             <h4 className="font-label-sm text-on-secondary-container">Safety Verified</h4>
             <p className="font-caption text-on-secondary-container/80">
-              EthicalFinder recommends meeting in public locations for item exchanges.
+              Hawalay recommends meeting in public locations for item exchanges.
             </p>
           </div>
         </div>

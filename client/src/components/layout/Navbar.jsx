@@ -1,8 +1,9 @@
 import { Link, useLocation } from 'react-router-dom';
+import { Logo } from '../Logo.jsx';
 
 /**
  * dashboard.html — Top App Bar
- * signUp.html — guest brand row (shield + EthicalFinder)
+ * signUp.html — guest brand row (logo + Hawalay)
  * notification_screen.html — avatar tile, settings-style icon buttons
  * login.html — footer / forgot link styling for auth links
  * notification_screen.html bottom nav — active Alerts (filled bell + font-bold)
@@ -12,8 +13,6 @@ const HEADER =
   'fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-16 bg-surface/70 backdrop-blur-lg shadow-sm';
 
 const GUEST_BRAND_WRAP = 'flex items-center gap-base';
-
-const GUEST_SHIELD = 'material-symbols-outlined text-primary';
 
 const BRAND_TITLE = 'font-h2 text-h2 font-bold text-primary';
 
@@ -53,10 +52,8 @@ export function Navbar({ user, unreadCount = 0, onLogout }) {
       {user == null ? (
         <>
           <Link to="/login" className={GUEST_BRAND_WRAP}>
-            <span className={GUEST_SHIELD} data-icon="shield">
-              shield
-            </span>
-            <h1 className={BRAND_TITLE}>EthicalFinder</h1>
+            <Logo size="sm" />
+            <h1 className={BRAND_TITLE}>Hawalay</h1>
           </Link>
           <div className="flex items-center gap-md">
             <Link
@@ -82,8 +79,9 @@ export function Navbar({ user, unreadCount = 0, onLogout }) {
               <img alt={user.name} className={AVATAR_IMG} src={user.avatarUrl} />
             </div>
             <span className={USER_NAME}>{user.name}</span>
-            <Link to="/dashboard" className="shrink-0">
-              <h1 className={BRAND_TITLE}>EthicalFinder</h1>
+            <Link to="/dashboard" className="flex items-center gap-2 shrink-0">
+              <Logo size="sm" />
+              <h1 className={BRAND_TITLE}>Hawalay</h1>
             </Link>
           </div>
           <div className="flex items-center gap-md">

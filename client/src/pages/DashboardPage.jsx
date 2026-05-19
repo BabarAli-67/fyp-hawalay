@@ -1,13 +1,76 @@
-import { Link, useLocation, useOutletContext } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
+import axiosInstance from '../api/axiosInstance.js';
+import { ItemCard } from '../components/items/ItemCard.jsx';
+import { EmptyState } from '../components/ui/EmptyState.jsx';
+import { Spinner } from '../components/ui/Spinner.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+
+const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
+
+function mapItemForCard(item) {
+  return {
+    _id: item._id,
+    title: item.title,
+    reportType: item.reportType,
+    category: item.category,
+    locationName: item.locationName,
+    date: item.date ? new Date(item.date).toISOString().slice(0, 10) : '',
+    status: item.status ?? 'active',
+    imageUrl:
+      item.imageFileId && API_BASE ? `${API_BASE}/api/items/${item._id}/image` : null,
+  };
+}
 
 /**
  * dashboard.html — 1:1 main column + bottom navigation (header supplied by AppLayout).
  */
 export default function DashboardPage() {
-  const { user } = useOutletContext();
+  const { user: authUser } = useAuth();
+  const outletContext = useOutletContext() ?? {};
+  const user = authUser ?? outletContext.user;
+  const navigate = useNavigate();
   const location = useLocation();
   const homeActive = location.pathname === '/dashboard';
-  const displayName = user?.name ?? 'Sarah';
+  const displayName = user?.name ?? 'there';
+
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const ownerId = user?._id ?? user?.id;
+
+  const fetchItems = useCallback(async () => {
+    if (!ownerId) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data } = await axiosInstance.get('/api/items', {
+        params: { ownerId, page: 1, limit: 20 },
+      });
+      setItems((data.items ?? []).map(mapItemForCard));
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [ownerId]);
+
+  useEffect(() => {
+    fetchItems();
+  }, [fetchItems]);
+
+  async function handleStatusChange(item, status) {
+    try {
+      await axiosInstance.patch(`/api/items/${item._id}/status`, { status });
+      await fetchItems();
+    } catch {
+      // Status stays unchanged; list is unchanged until a successful patch.
+    }
+  }
 
   return (
     <div className="bg-background text-on-background min-h-screen pb-24">
@@ -17,24 +80,26 @@ export default function DashboardPage() {
           <p className="font-body-md text-on-surface-variant">Your ethical stewardship dashboard is ready.</p>
         </section>
         <section className="grid grid-cols-2 gap-md">
-          <Link
-            to="/report"
-            className="bg-primary shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer"
+          <button
+            type="button"
+            onClick={() => navigate('/report', { state: { reportType: 'lost' } })}
+            className="bg-primary shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer text-left"
           >
             <div className="bg-white/20 w-10 h-10 rounded-lg flex items-center justify-center">
               <span className="material-symbols-outlined text-white">search</span>
             </div>
             <span className="text-white font-h3 text-h3 leading-tight">Report Lost</span>
-          </Link>
-          <Link
-            to="/report"
-            className="bg-primary-container shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer"
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/report', { state: { reportType: 'found' } })}
+            className="bg-primary-container shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer text-left"
           >
             <div className="bg-on-primary-container/10 w-10 h-10 rounded-lg flex items-center justify-center">
               <span className="material-symbols-outlined text-on-primary-container">add_circle</span>
             </div>
             <span className="text-on-primary-container font-h3 text-h3 leading-tight">Report Found</span>
-          </Link>
+          </button>
           <div className="bg-surface-container shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer border border-outline-variant/30">
             <div className="bg-on-surface-variant/10 w-10 h-10 rounded-lg flex items-center justify-center">
               <span className="material-symbols-outlined text-on-surface-variant">document_scanner</span>
@@ -76,62 +141,28 @@ export default function DashboardPage() {
         <section className="space-y-md pb-8">
           <div className="flex justify-between items-center">
             <h3 className="font-h3 text-h3 text-on-surface">Recent Activity</h3>
-            <button type="button" className="text-primary font-label-sm">
-              View All
-            </button>
           </div>
-          <div className="flex overflow-x-auto gap-md pb-4 custom-scrollbar -mx-margin-mobile px-margin-mobile">
-            <div className="min-w-[280px] bg-surface rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden flex flex-col">
-              <div className="h-32 w-full relative">
-                <img
-                  alt="Wallet"
-                  className="w-full h-full object-cover"
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuCZrL5Cl5XhiVEW3MXKAjkerNh0TVIgKViTKhiN5e7T16HjVzJ3uBKM3g9hoAttrh8sAwzyEKazjKwxpOh9vpf3VcOElQ7iRLUk5HOlkZBbPVLYbGY73epMcwieqcZ6MhcB91sEYtWmq3PLgTvqFZWmXrQh1skIL-FBCFpHadJsjzMjVIgsdxjNDH08CWOufSBwGf4snmDgyWGpZwFsXCdge1JmMOd4pGquSicrdsL1redrUQgdQyxt3yBlf2Dod4EVYoEfz7nFgHs"
-                />
-                <div className="absolute top-2 right-2 px-2 py-1 bg-primary/90 text-white text-[10px] font-bold rounded-md backdrop-blur-sm">
-                  FOUND
-                </div>
-              </div>
-              <div className="p-md space-y-xs">
-                <h4 className="font-h3 text-h3 text-on-surface">Leather Wallet</h4>
-                <div className="flex items-center gap-xs text-outline">
-                  <span className="material-symbols-outlined text-[16px]">location_on</span>
-                  <span className="text-caption">Central Plaza</span>
-                </div>
-                <div className="flex items-center justify-between pt-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-tertiary animate-pulse"></div>
-                    <span className="text-caption font-medium text-tertiary">Pending Match</span>
-                  </div>
-                </div>
-              </div>
+          {loading ? (
+            <div className="flex justify-center py-xl">
+              <Spinner />
             </div>
-            <div className="min-w-[280px] bg-surface rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden flex flex-col">
-              <div className="h-32 w-full relative">
-                <img
-                  alt="Keys"
-                  className="w-full h-full object-cover"
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuC4LleA5fLFaEKl6xh2dqqhpXhYOLTLSf8A9lpnwzwmHHJf-6-HwmS6U3WOK1f-j549YYgmfFtSQa1fC3UrHvG0VEb-VTOsRbKQFsh9xoaKg7fyhscnle8HpQ28khvvQv7iZWmglUw05IsjomGDTCavuABIZeMT2xy6eRfSBtqoRSlLhgdtj83KbERrmFHo22hu3vrc_wN7B8bAB86i0lzLVP8B9MJPbZror7KOF406neWZVAL9-N4b02L04cJD-0QBQ7Wj8dL8rW0"
-                />
-                <div className="absolute top-2 right-2 px-2 py-1 bg-outline text-white text-[10px] font-bold rounded-md backdrop-blur-sm">
-                  LOST
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon="inventory_2"
+              title="No reports yet"
+              subtitle="Report a lost or found item to see it here."
+              actionLabel="Report an item"
+              onAction={() => navigate('/report', { state: { reportType: 'lost' } })}
+            />
+          ) : (
+            <div className="flex overflow-x-auto gap-md pb-4 custom-scrollbar -mx-margin-mobile px-margin-mobile">
+              {items.map((item) => (
+                <div key={item._id} className="min-w-[280px] shrink-0">
+                  <ItemCard item={item} onStatusChange={handleStatusChange} />
                 </div>
-              </div>
-              <div className="p-md space-y-xs">
-                <h4 className="font-h3 text-h3 text-on-surface">Car Keys (Toyota)</h4>
-                <div className="flex items-center gap-xs text-outline">
-                  <span className="material-symbols-outlined text-[16px]">location_on</span>
-                  <span className="text-caption">City Library</span>
-                </div>
-                <div className="flex items-center justify-between pt-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-outline"></div>
-                    <span className="text-caption font-medium text-outline">Searching</span>
-                  </div>
-                </div>
-              </div>
+              ))}
             </div>
-          </div>
+          )}
         </section>
       </div>
       <nav className="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-safe h-20 bg-surface/70 backdrop-blur-xl rounded-t-xl shadow-lg">

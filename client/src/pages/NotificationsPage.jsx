@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { Logo } from '../components/Logo.jsx';
 
 /**
  * notification_screen.html — 1:1 body structure (header, main, bottom nav).
@@ -8,14 +9,8 @@ export default function NotificationsPage() {
     <div className="bg-background text-on-surface min-h-screen pb-32">
       <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-16 bg-surface/70 backdrop-blur-lg shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container overflow-hidden">
-            <img
-              className="w-full h-full object-cover"
-              alt=""
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDEGMQXcArm3l3gabEp1CoL0LaU5SfLh8HNiM7iMui_BBTyK39YiLoDtzs_TsMRNVTp-TBxK0iwq1iywwKx-trjaYs7p_iY7lBVD0cJVQy8rQpY_BuD4Hw-y0fLefWpP7eVt4seDutwOnE_ZPIKcsoLh84gQioRxZoqFYs7NGEGYVqWUfCGw1LcrEpZQ66BzciAnSfoWgqMZJmdXrrUM-vZWj1ZbzWgZeuRclI7s-_9WXgnfyQIO3QKPpbX57f3ZCa8G2V6sMQ7mTg"
-            />
-          </div>
-          <h1 className="font-h2 text-h2 font-bold text-primary">EthicalFinder</h1>
+          <Logo size="sm" />
+          <h1 className="font-h2 text-h2 font-bold text-primary">Hawalay</h1>
         </div>
         <button
           type="button"

@@ -9,6 +9,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Leaflet map tiles sit below Hawalay overlays (buttons, cards). */
+.hawalay-map .leaflet-container {
+  font-family: var(--font-brand);
+}
+
 /**
  * CSS variables mirror tailwind.config.js named brand keys (same hex values as Stitch).
  */

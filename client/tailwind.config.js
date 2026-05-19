@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 /**
- * Stitch (EthicalFinder / Hawalay) — shared design tokens from Stitch HTML.
+ * Stitch (Hawalay) — shared design tokens from Stitch HTML.
  * Pages use Tailwind utilities generated from this config + `src/index.css` globals.
  */
 module.exports = {

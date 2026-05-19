@@ -7,3 +7,4 @@ export { Navbar } from './layout/Navbar.jsx';
 export { AppLayout } from './layout/AppLayout.jsx';
 export { ItemCard } from './items/ItemCard.jsx';
 export { MatchCard } from './matches/MatchCard.jsx';
+export { Map, geoJsonToLeaflet, leafletToGeoJson } from './Map.jsx';

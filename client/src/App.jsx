@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { Routes, Route, Navigate } from 'react-router-dom';
@@ -6,8 +6,10 @@ import { AppLayout } from './components/layout/AppLayout.jsx';
 import { PrivateRoute } from './components/routing/PrivateRoute.jsx';
 import { SplashScreen } from './components/ui/splash-screen.jsx';
 import { useAuth } from './context/AuthContext.jsx';
+import ForgotPasswordPage from './pages/auth/ForgotPasswordPage.jsx';
 import LoginPage from './pages/auth/LoginPage.jsx';
 import RegisterPage from './pages/auth/RegisterPage.jsx';
+import ResetPasswordPage from './pages/auth/ResetPasswordPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import ReportPage from './pages/ReportPage.jsx';
 import MatchResultsPage from './pages/MatchResultsPage.jsx';
@@ -16,14 +18,31 @@ import NotificationsPage from './pages/NotificationsPage.jsx';
 import ProfilePage from './pages/ProfilePage.jsx';
 import ItemDetailsPage from './pages/ItemDetailsPage.jsx';
 import OfflineExperiencePage from './pages/OfflineExperiencePage.jsx';
-import { MOCK_UNREAD_NOTIFICATIONS } from './constants/mockData.js';
+import axiosInstance from './api/axiosInstance.js';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
 function AppShell() {
   const { user, logout } = useAuth();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const fetchUnreadCount = useCallback(() => {
+    if (!user) {
+      setUnreadCount(0);
+      return;
+    }
+    axiosInstance
+      .get('/api/notifications/unread-count')
+      .then((res) => setUnreadCount(res.data?.count ?? 0))
+      .catch(() => setUnreadCount(0));
+  }, [user]);
+
+  useEffect(() => {
+    fetchUnreadCount();
+  }, [fetchUnreadCount]);
+
   return (
-    <AppLayout user={user} unreadCount={MOCK_UNREAD_NOTIFICATIONS} onLogout={logout} />
+    <AppLayout user={user} unreadCount={unreadCount} onLogout={logout} />
   );
 }
 
@@ -47,6 +66,8 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/" element={<HomeRedirect />} />
           <Route element={<PrivateRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />

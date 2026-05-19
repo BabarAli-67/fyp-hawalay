@@ -18,7 +18,18 @@ const generalLimiter = rateLimit({
   skip: (req) => req.method === 'GET' && req.path === '/health',
 });
 
+const resendOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({ error: 'Too many resend requests. Please try again later.' });
+  },
+});
+
 module.exports = {
   authLimiter,
+  resendOtpLimiter,
   generalLimiter,
 };

@@ -3,14 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import axiosInstance from '../../api/axiosInstance.js';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { Button, Spinner } from '../../components/ui/index.js';
+import { AuthFooter } from '../../components/auth/AuthFooter.jsx';
+import { Button, Logo, Spinner } from '../../components/ui/index.js';
 
 /** login.html — Google logo asset */
 const GOOGLE_LOGO_SRC =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuB_519AzeoAiZYZDhxIO-FAJXS1ZqU2zZ2VWIypJWzuQgsqi3Uyb52aMwtHwQx6pNurQcunBj7IYmnTKy1ffiZXpUz6ek2Mga9vt8ubRMflgIlAFh3ozONQBu_04XwZROJg55EwaswMpxIfSpYtbrxdXz8E79d8RAb9WzooUOxRlCRyHFOwyQGOFxg9B6FBdQracUfobCT6kdaRtJd8WgE1qOcFOOpTxLos4qEN3s57oWvGx09qngeVW84ZeFTCOyUGK52CV6McG-c';
-
-const ILLUSTRATION_SRC =
-  'https://lh3.googleusercontent.com/aida-public/AB6AXuBU8LCt-h_Yrv1ShpchljwJvMFTHSFMaxMeBphyoqvu4Q-C2OwKMX5XQmf1E6QCzy8MxdG6l_JxFMgu-q5pI_jzNWfnUs9Zy-7S8bASL6y1t7KsjWjTdRFE5cRKNVP1COMywYNUHq2iCWfiA7f-inl3LTzS-Qpe6f8k-ZQmRw3d-dtCz3CQAs7413aoqZJDVevvmhKqcAAE-ggXfh8wtsnf6DtpKJp-PGYcEfvECvhrwZyQCTkSFR6vbBT3NdmbZYlRfXnjcRdbg-M';
 
 const STITCH_GOOGLE_BTN =
   'w-full bg-surface-container-lowest border border-outline-variant text-on-surface h-12 rounded-lg font-label-sm shadow-sm active:scale-95 transition-soft flex items-center justify-center gap-md';
@@ -135,6 +133,12 @@ export default function LoginPage() {
       const body = err?.response?.data;
       if (status === 400 && body?.errors) {
         setFieldErrors(mapValidationErrors(body.errors));
+      } else if (status === 403 && body?.code === 'EMAIL_NOT_VERIFIED') {
+        setGenericError(
+          typeof body?.error === 'string'
+            ? body.error
+            : 'Email not verified. Complete registration and verify your email first.',
+        );
       } else if (status === 401 || status === 500) {
         setGenericError(
           typeof body?.error === 'string' ? body.error : 'Something went wrong. Please try again.',
@@ -159,17 +163,11 @@ export default function LoginPage() {
       <main className="relative z-10 min-h-screen flex flex-col items-center justify-center px-margin-mobile py-xl">
         <header className="w-full max-w-md text-center mb-xl">
           <div className="inline-flex items-center justify-center p-md bg-surface-container-lowest rounded-xl shadow-sm mb-lg border border-outline-variant/30">
-            <span
-              className="material-symbols-outlined text-[48px] text-primary"
-              data-icon="shield_with_heart"
-              style={{ fontVariationSettings: "'FILL' 1" }}
-            >
-              shield_with_heart
-            </span>
+            <Logo size="xl" />
           </div>
-          <h1 className="font-h1 text-h1 text-on-surface mb-xs">EthicalFinder</h1>
+          <h1 className="font-h1 text-h1 text-on-surface mb-xs">Hawalay</h1>
           <p className="font-body-md text-on-surface-variant max-w-xs mx-auto">
-            Providing peace of mind through community stewardship and integrity.
+          Secure, AI-driven lost identity recovery. Returning what belongs to you through intelligent stewardship.
           </p>
         </header>
         <div
@@ -242,9 +240,9 @@ export default function LoginPage() {
               </p>
             </div>
             <div className="flex justify-end">
-              <a className="font-label-sm text-primary hover:opacity-80 transition-soft" href="#">
+              <Link className="font-label-sm text-primary hover:opacity-80 transition-soft" to="/forgot-password">
                 Forgot Password?
-              </a>
+              </Link>
             </div>
             <Button type="submit" variant="primary" size="md" loading={submitting}>
               Login
@@ -260,30 +258,7 @@ export default function LoginPage() {
             {googleConfigured ? <GoogleLoginButton /> : <GoogleLoginPlaceholder />}
           </form>
         </div>
-        <footer className="mt-xl text-center">
-          <p className="font-body-md text-on-surface-variant">
-            Don&apos;t have an account?{' '}
-            <Link className="font-label-sm text-primary font-bold hover:underline" to="/register">
-              Sign Up
-            </Link>
-          </p>
-          <div className="mt-lg flex items-center justify-center gap-lg">
-            <a className="font-caption text-on-surface-variant hover:text-primary transition-colors" href="#">
-              Privacy Policy
-            </a>
-            <span className="w-1 h-1 rounded-full bg-outline-variant"></span>
-            <a className="font-caption text-on-surface-variant hover:text-primary transition-colors" href="#">
-              Terms of Service
-            </a>
-          </div>
-        </footer>
-        <div className="mt-xl opacity-20 pointer-events-none">
-          <img
-            alt=""
-            className="w-64 h-auto rounded-full mix-blend-multiply"
-            src={ILLUSTRATION_SRC}
-          />
-        </div>
+        <AuthFooter variant="login" />
       </main>
     </div>
   );

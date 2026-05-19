@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { Logo } from '../components/Logo.jsx';
 
 /**
  * offline_pwa_experience.html — 1:1 body structure (header, main, bottom nav).
@@ -7,7 +8,10 @@ export default function OfflineExperiencePage() {
   return (
     <div className="bg-background text-on-surface min-h-screen pb-24">
       <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-16 bg-surface/70 dark:bg-inverse-surface/70 backdrop-blur-lg shadow-sm">
-        <h1 className="font-h2 text-h2 font-bold text-primary dark:text-primary-fixed-dim">EthicalFinder</h1>
+        <div className="flex items-center gap-2">
+          <Logo size="sm" />
+          <h1 className="font-h2 text-h2 font-bold text-primary dark:text-primary-fixed-dim">Hawalay</h1>
+        </div>
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -51,7 +55,7 @@ export default function OfflineExperiencePage() {
           <div className="flex-1">
             <h3 className="font-h3 text-h3 text-primary mb-1">Access Everywhere</h3>
             <p className="font-caption text-caption text-on-surface-variant">
-              Install EthicalFinder to use features without an internet connection.
+              Install Hawalay to use features without an internet connection.
             </p>
           </div>
           <button type="button" className="bg-secondary-container text-on-secondary-container font-label-sm text-label-sm px-md py-sm rounded-lg active:scale-95 transition-all">

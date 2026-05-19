@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { Logo } from '../components/Logo.jsx';
 
 /**
  * user_profle.html — 1:1 body structure (header, main, bottom nav).
@@ -8,14 +9,8 @@ export default function ProfilePage() {
     <div className="bg-background text-on-surface min-h-screen pb-32">
       <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-16 bg-surface/70 backdrop-blur-lg shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-primary-container shadow-sm">
-            <img
-              alt="User Profile"
-              className="w-full h-full object-cover"
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuB6pXOF-iyI-6Ti9RXxdcrJ9uwskpqV0-7Xkb6R7t7MkQVeqno-rAszLrNGWMf_Eq6DCNNjYa1rgkX6hRjbI6Z-4RFOVzUIrmWkfJ_5TjVm4HJ6LdtJf2Shj15SJnf-kfWNqmHXrTOW9NC0Tv2bZJ_CV5aVV9826NmSr7YcfKKbENB6tPOog5Dn9eRWxxfubMOo7W3O_3YQ0BjHT7wAzzeKLfogXXaPRhN6d4yTCeSlu-kH_QuKPfs4_2Bso-RLablyVLAT2QEVojc"
-            />
-          </div>
-          <span className="font-h2 text-h2 font-bold text-primary">EthicalFinder</span>
+          <Logo size="sm" />
+          <span className="font-h2 text-h2 font-bold text-primary">Hawalay</span>
         </div>
         <button type="button" className="material-symbols-outlined text-primary hover:opacity-80 transition-opacity active:scale-95 duration-200">
           settings

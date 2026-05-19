@@ -25,6 +25,7 @@ if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535');
 }
 
+require('./config/gridfs');
 const app = require('./app');
 const { connectDatabase } = require('./config/db');
 

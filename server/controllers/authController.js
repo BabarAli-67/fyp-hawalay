@@ -1,47 +1,17 @@
 const bcrypt = require('bcrypt');
 const { OAuth2Client } = require('google-auth-library');
-const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { signAccessToken } = require('../utils/authTokens');
 
 const INVALID_CREDENTIALS = 'Invalid credentials';
+const EMAIL_NOT_VERIFIED_MSG =
+  'Email not verified. Complete registration and verify your email before signing in.';
 
-function signAccessToken(user) {
-  return jwt.sign(
-    { userId: user._id.toString(), email: user.email },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' },
-  );
-}
-
-async function register(req, res, next) {
-  try {
-    const { name, email, password } = req.body;
-
-    const existing = await User.findOne({ email });
-    if (existing) {
-      return res.status(409).json({ error: 'Email already registered' });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({
-      name,
-      email,
-      passwordHash,
-      authProvider: 'local',
-    });
-
-    const token = signAccessToken(user);
-
-    return res.status(201).json({
-      token,
-      user: user.toSafeObject(),
-    });
-  } catch (err) {
-    if (err && err.code === 11000) {
-      return res.status(409).json({ error: 'Email already registered' });
-    }
-    return next(err);
-  }
+async function register(req, res) {
+  return res.status(400).json({
+    error: 'Direct registration is disabled. Request a verification code first, then verify your email.',
+    code: 'USE_EMAIL_VERIFICATION',
+  });
 }
 
 async function login(req, res, next) {
@@ -51,6 +21,13 @@ async function login(req, res, next) {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ error: INVALID_CREDENTIALS });
+    }
+
+    if (user.authProvider === 'local' && !user.isVerified) {
+      return res.status(403).json({
+        error: EMAIL_NOT_VERIFIED_MSG,
+        code: 'EMAIL_NOT_VERIFIED',
+      });
     }
 
     const match = user.passwordHash && (await bcrypt.compare(password, user.passwordHash));
@@ -122,10 +99,16 @@ async function googleAuth(req, res, next) {
         passwordHash: null,
         authProvider: 'google',
         googleId,
+        isVerified: true,
       });
-    } else if (!user.googleId) {
-      user.googleId = googleId;
-      user.authProvider = 'google';
+    } else {
+      if (!user.googleId) {
+        user.googleId = googleId;
+        user.authProvider = 'google';
+      }
+      if (!user.isVerified) {
+        user.isVerified = true;
+      }
       await user.save();
     }
 

@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
+import { Logo } from '../components/Logo.jsx';
 
 /**
  * item_details.html — 1:1 body structure (header, main, footer). Bottom nav omitted per HTML comment.
@@ -15,7 +16,10 @@ export default function ItemDetailsPage() {
         >
           <span className="material-symbols-outlined text-primary">arrow_back</span>
         </button>
-        <h1 className="font-h3 text-h3 text-on-surface font-bold">EthicalFinder</h1>
+        <div className="flex items-center gap-2">
+          <Logo size="sm" />
+          <h1 className="font-h3 text-h3 text-on-surface font-bold">Hawalay</h1>
+        </div>
         <div className="flex items-center gap-4">
           <span className="material-symbols-outlined text-on-surface-variant hover:opacity-80 transition-opacity cursor-pointer">
             share

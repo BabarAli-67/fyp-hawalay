@@ -1,0 +1,32 @@
+const express = require('express');
+
+const {
+  createItem,
+  getItemById,
+  getItems,
+  processImage,
+  streamImage,
+  updateStatus,
+} = require('../controllers/itemController');
+const { authMiddleware } = require('../middleware');
+const handleValidationErrors = require('../middleware/handleValidationErrors');
+const { uploadItemImage } = require('../middleware/uploadItemImage');
+const {
+  createItemValidation,
+  getItemsValidation,
+  itemIdParamValidation,
+  updateStatusValidation,
+} = require('../middleware/validators/itemValidators');
+
+const router = express.Router();
+
+router.use(authMiddleware);
+
+router.post('/process-image', uploadItemImage, processImage);
+router.get('/:id/image', itemIdParamValidation, handleValidationErrors, streamImage);
+router.patch('/:id/status', updateStatusValidation, handleValidationErrors, updateStatus);
+router.post('/', uploadItemImage, createItemValidation, handleValidationErrors, createItem);
+router.get('/', getItemsValidation, handleValidationErrors, getItems);
+router.get('/:id', itemIdParamValidation, handleValidationErrors, getItemById);
+
+module.exports = router;

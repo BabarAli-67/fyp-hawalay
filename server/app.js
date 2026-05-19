@@ -7,6 +7,8 @@ const errorHandler = require('./middleware/errorHandler');
 const { authMiddleware } = require('./middleware');
 const { generalLimiter } = require('./middleware/rateLimiter');
 const authRoutes = require('./routes/auth');
+const itemRoutes = require('./routes/items');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 
@@ -58,6 +60,8 @@ app.use((req, res, next) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/items', itemRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
