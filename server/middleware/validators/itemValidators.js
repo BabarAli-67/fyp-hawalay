@@ -30,7 +30,9 @@ const createItemValidation = [
 const getItemsValidation = [
   query('category').optional().isIn(CATEGORIES),
   query('reportType').optional().isIn(REPORT_TYPES),
+  query('status').optional().isIn(STATUSES),
   query('ownerId').optional().isMongoId(),
+  query('q').optional().trim().isLength({ max: 120 }),
   query('page').optional().isInt({ min: 1 }).toInt(),
   query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
 ];

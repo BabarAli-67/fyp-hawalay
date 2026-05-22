@@ -1,26 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import axiosInstance from '../api/axiosInstance.js';
 import { ItemCard } from '../components/items/ItemCard.jsx';
 import { EmptyState } from '../components/ui/EmptyState.jsx';
 import { Spinner } from '../components/ui/Spinner.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-
-const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
-
-function mapItemForCard(item) {
-  return {
-    _id: item._id,
-    title: item.title,
-    reportType: item.reportType,
-    category: item.category,
-    locationName: item.locationName,
-    date: item.date ? new Date(item.date).toISOString().slice(0, 10) : '',
-    status: item.status ?? 'active',
-    imageUrl:
-      item.imageFileId && API_BASE ? `${API_BASE}/api/items/${item._id}/image` : null,
-  };
-}
+import { mapItemForCard } from '../utils/mapItemForCard.js';
 
 /**
  * dashboard.html — 1:1 main column + bottom navigation (header supplied by AppLayout).
@@ -30,8 +15,6 @@ export default function DashboardPage() {
   const outletContext = useOutletContext() ?? {};
   const user = authUser ?? outletContext.user;
   const navigate = useNavigate();
-  const location = useLocation();
-  const homeActive = location.pathname === '/dashboard';
   const displayName = user?.name ?? 'there';
 
   const [items, setItems] = useState([]);
@@ -73,7 +56,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="bg-background text-on-background min-h-screen pb-24">
+    <div className="bg-background text-on-background min-h-screen">
       <div className="px-margin-mobile space-y-lg">
         <section className="mt-4">
           <h2 className="font-h1 text-h1 text-on-surface">Hello, {displayName}</h2>
@@ -165,53 +148,6 @@ export default function DashboardPage() {
           )}
         </section>
       </div>
-      <nav className="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-safe h-20 bg-surface/70 backdrop-blur-xl rounded-t-xl shadow-lg">
-        <Link
-          to="/dashboard"
-          className={`flex flex-col items-center justify-center active:scale-98 transition-all duration-200 cursor-pointer px-3 py-1 rounded-xl ${
-            homeActive ? 'text-primary font-bold' : 'text-on-surface-variant hover:bg-surface-container-high/50'
-          }`}
-          aria-current={homeActive ? 'page' : undefined}
-        >
-          <span
-            className="material-symbols-outlined"
-            style={homeActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
-          >
-            home
-          </span>
-          <span className="font-label-sm text-label-sm">Home</span>
-        </Link>
-        <Link
-          to="/matches"
-          className="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high/50 rounded-xl transition-all duration-200 cursor-pointer px-3 py-1"
-        >
-          <span className="material-symbols-outlined">search</span>
-          <span className="font-label-sm text-label-sm">Search</span>
-        </Link>
-        <Link
-          to="/report"
-          className="flex flex-col items-center justify-center relative -mt-8"
-        >
-          <div className="w-14 h-14 bg-primary rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform duration-200">
-            <span className="material-symbols-outlined text-white text-[32px]">add</span>
-          </div>
-          <span className="font-label-sm text-label-sm text-on-surface-variant mt-2">Report</span>
-        </Link>
-        <Link
-          to="/notifications"
-          className="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high/50 rounded-xl transition-all duration-200 cursor-pointer px-3 py-1"
-        >
-          <span className="material-symbols-outlined">notifications</span>
-          <span className="font-label-sm text-label-sm">Alerts</span>
-        </Link>
-        <Link
-          to="/profile"
-          className="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high/50 rounded-xl transition-all duration-200 cursor-pointer px-3 py-1"
-        >
-          <span className="material-symbols-outlined">person</span>
-          <span className="font-label-sm text-label-sm">Profile</span>
-        </Link>
-      </nav>
     </div>
   );
 }

@@ -12,6 +12,7 @@ import RegisterPage from './pages/auth/RegisterPage.jsx';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import ReportPage from './pages/ReportPage.jsx';
+import BrowseFeedPage from './pages/BrowseFeedPage.jsx';
 import MatchResultsPage from './pages/MatchResultsPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import NotificationsPage from './pages/NotificationsPage.jsx';
@@ -72,12 +73,13 @@ export default function App() {
           <Route element={<PrivateRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/report" element={<ReportPage />} />
-            <Route path="/matches" element={<MatchResultsPage />} />
+            <Route path="/matches" element={<BrowseFeedPage />} />
+            <Route path="/matches/ai" element={<MatchResultsPage />} />
             <Route path="/chat" element={<Navigate to="/chat/m1" replace />} />
             <Route path="/chat/:id" element={<ChatPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/item" element={<ItemDetailsPage />} />
+            <Route path="/item/:id" element={<ItemDetailsPage />} />
             <Route path="/offline" element={<OfflineExperiencePage />} />
           </Route>
         </Route>

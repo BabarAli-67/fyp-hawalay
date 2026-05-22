@@ -52,11 +52,11 @@ const itemSchema = new mongoose.Schema(
       type: {
         type: String,
         enum: ['Point'],
-        required: true,
+        default: 'Point',
       },
       coordinates: {
         type: [Number],
-        required: true,
+        default: undefined,
       },
     },
     secondaryLocationName: {
@@ -129,6 +129,11 @@ function stripInvalidPoint(doc, path) {
     doc.set(path, undefined);
   }
 }
+
+itemSchema.pre('validate', function stripPartialGeo(next) {
+  stripInvalidPoint(this, 'secondaryLocation');
+  next();
+});
 
 itemSchema.pre('save', function normalizeGeo(next) {
   stripInvalidPoint(this, 'secondaryLocation');

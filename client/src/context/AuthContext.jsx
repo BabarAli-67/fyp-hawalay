@@ -32,6 +32,7 @@ export function AuthProvider({ children }) {
   const initial = readStoredAuth();
   const [user, setUser] = useState(initial.user);
   const [token, setToken] = useState(initial.token);
+  const [isAuthLoading, setIsAuthLoading] = useState(() => Boolean(initial.token));
 
   const logout = useCallback(() => {
     localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -45,11 +46,18 @@ export function AuthProvider({ children }) {
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData));
     setToken(newToken);
     setUser(userData);
+    setIsAuthLoading(false);
+  }, []);
+
+  const updateUser = useCallback((userData) => {
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData));
+    setUser(userData);
   }, []);
 
   useEffect(() => {
     const stored = localStorage.getItem(AUTH_TOKEN_KEY);
     if (!stored) {
+      setIsAuthLoading(false);
       return;
     }
 
@@ -58,14 +66,17 @@ export function AuthProvider({ children }) {
       decoded = jwtDecode(stored);
     } catch {
       logout();
+      setIsAuthLoading(false);
       return;
     }
 
     if (typeof decoded.exp !== 'number' || decoded.exp * 1000 <= Date.now()) {
       logout();
+      setIsAuthLoading(false);
       return;
     }
 
+    setIsAuthLoading(true);
     axiosInstance
       .get('/api/auth/me')
       .then((res) => {
@@ -75,6 +86,9 @@ export function AuthProvider({ children }) {
       })
       .catch(() => {
         logout();
+      })
+      .finally(() => {
+        setIsAuthLoading(false);
       });
   }, [logout]);
 
@@ -82,10 +96,12 @@ export function AuthProvider({ children }) {
     () => ({
       user,
       token,
+      isAuthLoading,
       login,
       logout,
+      updateUser,
     }),
-    [user, token, login, logout],
+    [user, token, isAuthLoading, login, logout, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

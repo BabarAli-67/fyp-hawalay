@@ -32,7 +32,22 @@ function getImageStream(fileId) {
   return bucket.openDownloadStream(new mongoose.Types.ObjectId(String(fileId)));
 }
 
+/**
+ * @param {mongoose.Types.ObjectId | string} fileId
+ * @returns {Promise<void>}
+ */
+function deleteFromGridFS(fileId) {
+  return new Promise((resolve, reject) => {
+    const bucket = getGridFSBucket();
+    bucket.delete(new mongoose.Types.ObjectId(String(fileId)), (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
 module.exports = {
   uploadToGridFS,
   getImageStream,
+  deleteFromGridFS,
 };

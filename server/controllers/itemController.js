@@ -188,9 +188,10 @@ async function createItem(req, res, next) {
 
     const embeddingVector = parseEmbeddingVector(req.body.embeddingVector);
 
-    const secondaryLocationName = secondaryLocation && req.body.secondaryLocationName
-      ? String(req.body.secondaryLocationName).trim()
-      : undefined;
+    const secondaryLocationName =
+      secondaryLocation && req.body.secondaryLocationName
+        ? String(req.body.secondaryLocationName).trim()
+        : undefined;
 
     const itemPayload = {
       ownerId: req.user.userId,
@@ -234,7 +235,7 @@ async function createItem(req, res, next) {
 
 async function getItems(req, res, next) {
   try {
-    const { category, reportType, ownerId } = req.query;
+    const { category, reportType, ownerId, status, q } = req.query;
     const page = req.query.page ?? 1;
     const limit = req.query.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -243,6 +244,19 @@ async function getItems(req, res, next) {
     if (category) filter.category = category;
     if (reportType) filter.reportType = reportType;
     if (ownerId) filter.ownerId = ownerId;
+    if (status) filter.status = status;
+
+    const keyword = typeof q === 'string' ? q.trim() : '';
+    if (keyword) {
+      const regex = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      filter.$or = [
+        { title: regex },
+        { description: regex },
+        { locationName: regex },
+        { brand: regex },
+        { distinctiveFeatures: regex },
+      ];
+    }
 
     const [items, total] = await Promise.all([
       Item.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),

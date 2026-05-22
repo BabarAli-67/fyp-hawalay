@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Logo } from '../Logo.jsx';
+import { UserAvatar } from '../UserAvatar.jsx';
 
 /**
  * dashboard.html — Top App Bar
@@ -17,11 +18,6 @@ const GUEST_BRAND_WRAP = 'flex items-center gap-base';
 const BRAND_TITLE = 'font-h2 text-h2 font-bold text-primary';
 
 const AUTH_LEFT_WRAP = 'flex items-center gap-3 flex-1 min-w-0';
-
-const AVATAR_WRAP =
-  'w-10 h-10 shrink-0 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container overflow-hidden';
-
-const AVATAR_IMG = 'w-full h-full object-cover';
 
 const USER_NAME = 'font-body-md text-on-surface-variant truncate flex-1 min-w-0';
 
@@ -75,9 +71,7 @@ export function Navbar({ user, unreadCount = 0, onLogout }) {
       ) : (
         <>
           <div className={AUTH_LEFT_WRAP}>
-            <div className={AVATAR_WRAP}>
-              <img alt={user.name} className={AVATAR_IMG} src={user.avatarUrl} />
-            </div>
+            <UserAvatar user={user} size="sm" />
             <span className={USER_NAME}>{user.name}</span>
             <Link to="/dashboard" className="flex items-center gap-2 shrink-0">
               <Logo size="sm" />

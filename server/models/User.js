@@ -41,6 +41,16 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    bio: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: '',
+    },
+    avatarFileId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
   },
   { timestamps: true },
 );
@@ -48,6 +58,13 @@ const userSchema = new mongoose.Schema(
 userSchema.methods.toSafeObject = function toSafeObject() {
   const obj = this.toObject();
   delete obj.passwordHash;
+  if (obj.avatarFileId) {
+    const version = obj.updatedAt ? new Date(obj.updatedAt).getTime() : 0;
+    obj.avatarUrl = `/api/users/me/avatar?v=${version}`;
+  } else {
+    obj.avatarUrl = null;
+  }
+  delete obj.avatarFileId;
   return obj;
 };
 

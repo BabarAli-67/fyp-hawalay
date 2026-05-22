@@ -105,6 +105,7 @@ const loginValidation = [
 ];
 
 module.exports = {
+  PASSWORD_COMPLEXITY_RE,
   registerValidation,
   sendOtpValidation,
   verifyOtpValidation,
