@@ -10,10 +10,14 @@ const authRoutes = require('./routes/auth');
 const itemRoutes = require('./routes/items');
 const notificationRoutes = require('./routes/notifications');
 const userRoutes = require('./routes/users');
+const { parseAllowedOrigins, isOriginAllowed } = require('./utils/corsOrigins');
 
 const app = express();
 
-const clientUrl = process.env.CLIENT_URL;
+const allowedOrigins = parseAllowedOrigins();
+if (allowedOrigins.length === 0) {
+  console.warn('[cors] No CLIENT_URL set — browser requests from a web app may be blocked.');
+}
 
 app.use(
   helmet({
@@ -28,10 +32,11 @@ app.use(
         callback(null, true);
         return;
       }
-      if (origin === clientUrl) {
+      if (isOriginAllowed(origin, allowedOrigins)) {
         callback(null, true);
         return;
       }
+      console.warn(`[cors] Blocked origin: ${origin} (allowed: ${allowedOrigins.join(', ') || 'none'})`);
       callback(new Error(`CORS: forbidden origin: ${origin}`));
     },
     credentials: true,

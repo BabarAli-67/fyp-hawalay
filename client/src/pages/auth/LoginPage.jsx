@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import axiosInstance from '../../api/axiosInstance.js';
+import { getApiErrorMessage } from '../../utils/apiErrors.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { AuthFooter } from '../../components/auth/AuthFooter.jsx';
 import { Button, Logo, Spinner } from '../../components/ui/index.js';
@@ -38,8 +39,7 @@ function GoogleLoginButton() {
         login(data.token, data.user);
         navigate('/dashboard');
       } catch (err) {
-        const msg = err?.response?.data?.error || err?.message || 'Unable to sign in with Google.';
-        setGoogleError(typeof msg === 'string' ? msg : 'Unable to sign in with Google.');
+        setGoogleError(getApiErrorMessage(err, 'Unable to sign in with Google.'));
       } finally {
         setGoogleBusy(false);
       }

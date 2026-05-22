@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { useNavigate } from 'react-router-dom';
 import axiosInstance from '../../api/axiosInstance.js';
+import { getApiErrorMessage } from '../../utils/apiErrors.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 
 /**
@@ -40,9 +41,7 @@ export function GoogleAuthButton({ text = 'signin_with' }) {
               login(data.token, data.user);
               navigate('/dashboard');
             } catch (err) {
-              const msg =
-                err?.response?.data?.error || err?.message || 'Unable to sign in with Google.';
-              setError(typeof msg === 'string' ? msg : 'Unable to sign in with Google.');
+              setError(getApiErrorMessage(err, 'Unable to sign in with Google.'));
             }
           }}
           onError={() => setError('Google sign-in was cancelled or failed.')}
