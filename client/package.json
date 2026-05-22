@@ -23,6 +23,9 @@
     "react-router-dom": "^6.30.3",
     "react-toastify": "^11.0.5"
   },
+  "engines": {
+    "node": "20.x"
+  },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
