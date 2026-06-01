@@ -2,6 +2,8 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
+# Non-secret defaults only. Secrets (GEMINI_API_KEY, MONGO_URI, etc.) come from .env
+# copied into the image at build time — never hardcode secrets in this file.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HOST=0.0.0.0 \

@@ -1,5 +1,6 @@
 # Deploy ai-server/ to Hugging Face Docker Space via huggingface_hub (no git subtree).
-# Repository secret required: HF_TOKEN (Write access to the Space).
+# GitHub repository secrets (Settings → Secrets → Actions):
+#   HF_TOKEN, GEMINI_API_KEY, MONGO_URI, INTERNAL_SECRET, NODE_SERVER_URL
 
 name: Sync ai-server to Hugging Face
 
@@ -22,6 +23,44 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
+      - name: Write .env for Hugging Face (from GitHub Secrets, not committed to GitHub)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          INTERNAL_SECRET: ${{ secrets.INTERNAL_SECRET }}
+          NODE_SERVER_URL: ${{ secrets.NODE_SERVER_URL }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for key in GEMINI_API_KEY MONGO_URI INTERNAL_SECRET NODE_SERVER_URL; do
+            if [ -z "${!key:-}" ]; then
+              echo "::warning::GitHub secret ${key} is not set — add it under Settings → Secrets → Actions"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -eq 1 ]; then
+            echo "::error::One or more deploy secrets are missing. The Space .env will be incomplete."
+            exit 1
+          fi
+          cat > ai-server/.env <<EOF
+          HOST=0.0.0.0
+          PORT=7860
+          ENVIRONMENT=production
+          NODE_SERVER_URL=${NODE_SERVER_URL}
+          MONGO_URI=${MONGO_URI}
+          MONGO_DB_NAME=fyp-hawalay
+          INTERNAL_SECRET=${INTERNAL_SECRET}
+          GEMINI_API_KEY=${GEMINI_API_KEY}
+          GEMINI_CAPTION_MODEL=gemini-2.0-flash
+          GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+          YOLO_WEIGHTS_PATH=/app/artifacts/ocr/weights/best.pt
+          YOLO_CONFIDENCE_THRESHOLD=0.5
+          YOLO_USE_GPU=false
+          EASYOCR_LANGS=en
+          EASYOCR_USE_GPU=false
+          EOF
+          echo "Wrote ai-server/.env for Hugging Face deploy (not pushed to GitHub)."
 
       - name: Upload ai-server to Hugging Face Space
         env:
@@ -49,6 +88,10 @@ jobs:
           if not folder.is_dir():
               raise SystemExit("ai-server directory not found in checkout")
 
+          env_file = folder / ".env"
+          if not env_file.is_file():
+              raise SystemExit("ai-server/.env missing — deploy secrets step failed")
+
           api = HfApi(token=token)
 
           try:
@@ -60,7 +103,6 @@ jobs:
           sha = os.environ.get("GITHUB_SHA", "")[:7]
           message = f"Deploy ai-server from GitHub Actions {sha}"
 
-          # Replace Space tree with ai-server contents at repo root (Dockerfile at /).
           api.upload_folder(
               folder_path=str(folder),
               repo_id=repo_id,
