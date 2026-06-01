@@ -25,6 +25,22 @@ const createItemValidation = [
   body('distinctiveFeatures').optional().isLength({ max: 500 }),
   body('contactPreference').optional().isIn(CONTACT_PREFERENCES),
   body('secondaryLocationName').optional().trim().isLength({ max: 200 }),
+  body('analyzeResult')
+    .optional()
+    .custom((value) => {
+      if (value == null || value === '') return true;
+      if (typeof value === 'object') return true;
+      if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          return parsed !== null && typeof parsed === 'object';
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    })
+    .withMessage('analyzeResult must be valid JSON'),
 ];
 
 const getItemsValidation = [

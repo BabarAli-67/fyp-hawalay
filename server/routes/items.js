@@ -1,7 +1,9 @@
 const express = require('express');
 
 const {
+  analyzeImage,
   createItem,
+  extractOcr,
   getItemById,
   getItems,
   processImage,
@@ -22,7 +24,9 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+router.post('/ocr', uploadItemImage, extractOcr);
 router.post('/process-image', uploadItemImage, processImage);
+router.post('/analyze-image', uploadItemImage, analyzeImage);
 router.get('/:id/image', itemIdParamValidation, handleValidationErrors, streamImage);
 router.patch('/:id/status', updateStatusValidation, handleValidationErrors, updateStatus);
 router.post('/', uploadItemImage, createItemValidation, handleValidationErrors, createItem);

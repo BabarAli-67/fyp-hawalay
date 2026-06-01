@@ -6,6 +6,7 @@ const {
   profileValidation,
   changePasswordValidation,
   removeAvatarValidation,
+  userIdParamValidation,
 } = require('../middleware/validators/userValidators');
 
 const router = express.Router();
@@ -23,6 +24,12 @@ function runMiddlewareChain(middlewares, req, res, next) {
 }
 
 router.get('/me/avatar', userController.streamAvatar);
+router.get(
+  '/:userId/avatar',
+  userIdParamValidation,
+  handleValidationErrors,
+  userController.streamUserAvatar,
+);
 
 router.patch(
   '/profile',

@@ -65,22 +65,49 @@ async function streamAvatar(req, res, next) {
       return res.status(404).json({ error: 'No avatar' });
     }
 
-    const downloadStream = getImageStream(user.avatarFileId);
-
-    downloadStream.on('error', (err) => {
-      if (err.code === 'ENOENT' || err.name === 'MongoRuntimeError') {
-        return res.status(404).json({ error: 'Avatar file not found' });
-      }
-      return next(err);
-    });
-
-    res.set('Content-Type', 'image/jpeg');
-    res.set('Cache-Control', 'private, max-age=300');
-    downloadStream.pipe(res);
-    return undefined;
+    return pipeAvatarStream(user.avatarFileId, res, next);
   } catch (err) {
     return next(err);
   }
+}
+
+async function streamUserAvatar(req, res, next) {
+  try {
+    const { userId } = req.params;
+    const viewerId = req.user.userId;
+
+    if (String(userId) !== String(viewerId)) {
+      const allowed = await userService.canViewAvatar(viewerId, userId);
+      if (!allowed) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
+    const user = await userService.findUserById(userId);
+    if (!user?.avatarFileId) {
+      return res.status(404).json({ error: 'No avatar' });
+    }
+
+    return pipeAvatarStream(user.avatarFileId, res, next);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+function pipeAvatarStream(fileId, res, next) {
+  const downloadStream = getImageStream(fileId);
+
+  downloadStream.on('error', (err) => {
+    if (err.code === 'ENOENT' || err.name === 'MongoRuntimeError') {
+      return res.status(404).json({ error: 'Avatar file not found' });
+    }
+    return next(err);
+  });
+
+  res.set('Content-Type', 'image/jpeg');
+  res.set('Cache-Control', 'private, max-age=300');
+  downloadStream.pipe(res);
+  return undefined;
 }
 
 module.exports = {
@@ -88,4 +115,5 @@ module.exports = {
   changePassword,
   updateAvatar,
   streamAvatar,
+  streamUserAvatar,
 };

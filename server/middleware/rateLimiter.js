@@ -10,12 +10,21 @@ const authLimiter = rateLimit({
   },
 });
 
+const ITEM_IMAGE_PATH = /^\/api\/items\/[^/]+\/image$/;
+const USER_AVATAR_PATH = /^\/api\/users\/[^/]+\/avatar$/;
+
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.method === 'GET' && req.path === '/health',
+  skip: (req) => {
+    if (req.method !== 'GET') return false;
+    if (req.path === '/health') return true;
+    if (ITEM_IMAGE_PATH.test(req.path)) return true;
+    if (USER_AVATAR_PATH.test(req.path)) return true;
+    return false;
+  },
 });
 
 const resendOtpLimiter = rateLimit({

@@ -10,7 +10,6 @@ const REQUIRED_ENV = [
   'PORT',
   'CLIENT_URL',
   'INTERNAL_SECRET',
-  'HF_TOKEN',
   'FASTAPI_URL',
   'GOOGLE_CLIENT_ID',
   'VAPID_PUBLIC_KEY',
@@ -28,15 +27,22 @@ if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
 require('./config/gridfs');
 const app = require('./app');
 const { connectDatabase } = require('./config/db');
+const { initSocket } = require('./socket');
+const { parseAllowedOrigins } = require('./utils/corsOrigins');
+const { probeFastApiHealth } = require('./services/aiClient');
 
 async function start() {
   await connectDatabase();
 
   const port = Number(process.env.PORT, 10);
   const server = http.createServer(app);
+  initSocket(server, { corsOrigins: parseAllowedOrigins() });
 
   server.listen(port, () => {
     console.info(`[server] listening on port ${port}`);
+    probeFastApiHealth().catch((err) => {
+      console.error('[aiClient] health probe failed:', err.message);
+    });
   });
 
   const shutdown = (signal) => {

@@ -9,6 +9,8 @@ const { generalLimiter } = require('./middleware/rateLimiter');
 const authRoutes = require('./routes/auth');
 const itemRoutes = require('./routes/items');
 const notificationRoutes = require('./routes/notifications');
+const matchRoutes = require('./routes/matches');
+const chatRoutes = require('./routes/chat');
 const userRoutes = require('./routes/users');
 const { parseAllowedOrigins, isOriginAllowed } = require('./utils/corsOrigins');
 
@@ -67,6 +69,8 @@ app.use((req, res, next) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/items', itemRoutes);
+app.use('/api/matches', matchRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/users', userRoutes);
 

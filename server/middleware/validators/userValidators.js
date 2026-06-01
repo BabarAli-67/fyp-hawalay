@@ -1,4 +1,4 @@
-const { body } = require('express-validator');
+const { body, param } = require('express-validator');
 const { PASSWORD_COMPLEXITY_RE } = require('./authValidators');
 
 const profileValidation = [
@@ -51,8 +51,13 @@ const removeAvatarValidation = [
   }),
 ];
 
+const userIdParamValidation = [
+  param('userId').isMongoId().withMessage('Invalid user id'),
+];
+
 module.exports = {
   profileValidation,
   changePasswordValidation,
   removeAvatarValidation,
+  userIdParamValidation,
 };

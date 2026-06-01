@@ -1,5 +1,7 @@
 const bcrypt = require('bcrypt');
+const mongoose = require('mongoose');
 const User = require('../models/User');
+const Match = require('../models/Match');
 const { uploadToGridFS, deleteFromGridFS } = require('../utils/imageStorage');
 
 async function findUserById(userId) {
@@ -115,10 +117,28 @@ async function clearAvatar(userId) {
   return user.toSafeObject();
 }
 
+async function canViewAvatar(viewerId, targetUserId) {
+  if (String(viewerId) === String(targetUserId)) {
+    return true;
+  }
+
+  const viewer = new mongoose.Types.ObjectId(viewerId);
+  const target = new mongoose.Types.ObjectId(targetUserId);
+  const sharedMatch = await Match.exists({
+    $or: [
+      { sourceItemOwnerId: viewer, matchedItemOwnerId: target },
+      { sourceItemOwnerId: target, matchedItemOwnerId: viewer },
+    ],
+  });
+
+  return Boolean(sharedMatch);
+}
+
 module.exports = {
   findUserById,
   updateProfile,
   changePassword,
   replaceAvatar,
   clearAvatar,
+  canViewAvatar,
 };

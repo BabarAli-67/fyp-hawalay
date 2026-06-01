@@ -94,6 +94,46 @@ const itemSchema = new mongoose.Schema(
       type: [Number],
       default: undefined,
     },
+    embeddingAvailable: {
+      type: Boolean,
+      default: false,
+    },
+    detectedObjects: {
+      type: [
+        {
+          className: { type: String, trim: true },
+          confidence: { type: Number, min: 0, max: 1 },
+          bbox: { type: [Number], default: undefined },
+          source: { type: String, trim: true },
+        },
+      ],
+      default: undefined,
+    },
+    aiMetadata: {
+      pipelineVersion: { type: String, default: 'analyze_v1' },
+      embeddingModel: { type: String },
+      embeddingDimension: { type: Number },
+      embeddingAvailable: { type: Boolean, default: false },
+      captionModel: { type: String },
+      ocrModel: { type: String },
+      objectModel: { type: String },
+      ocrStatus: {
+        type: String,
+        enum: ['success', 'degraded', 'failed', 'skipped'],
+        default: 'skipped',
+      },
+      objectStatus: {
+        type: String,
+        enum: ['success', 'skipped', 'unavailable', 'error', 'degraded'],
+        default: 'skipped',
+      },
+      detectionCount: { type: Number, default: 0 },
+      suggestedCategory: { type: String },
+      ocrFields: { type: mongoose.Schema.Types.Mixed },
+      processedAt: { type: Date },
+      processingTimeMs: { type: Number },
+      retryCount: { type: Number, default: 0 },
+    },
     imageFileId: {
       type: mongoose.Schema.Types.ObjectId,
       default: null,
@@ -147,6 +187,7 @@ itemSchema.index({ category: 1 });
 itemSchema.index({ reportType: 1, status: 1 });
 itemSchema.index({ ownerId: 1 });
 itemSchema.index({ date: -1 });
+itemSchema.index({ embeddingAvailable: 1 });
 
 const Item = mongoose.model('Item', itemSchema);
 

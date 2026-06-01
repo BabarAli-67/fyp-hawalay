@@ -1,7 +1,15 @@
-const axios = require('axios');
 const Item = require('../models/Item');
-const { triggerMatching } = require('../services/matchingService');
+const { triggerMatchingWithRetry } = require('../services/matchingService');
+const {
+  analyzeImage: callAnalyzeImage,
+  postMultipart,
+  mapAiServiceError,
+  DEFAULT_TIMEOUT_MS,
+  OCR_TIMEOUT_MS,
+} = require('../services/aiClient');
 const { getImageStream, uploadToGridFS } = require('../utils/imageStorage');
+const { suggestCategoryFromDetections } = require('../utils/categoryMapping');
+const { resolveItemEmbedding } = require('../utils/itemEmbedding');
 
 const CATEGORIES = ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'];
 const REPORT_TYPES = ['lost', 'found'];
@@ -88,6 +96,127 @@ function parseColors(raw) {
 }
 
 const CONTACT_PREFERENCES = ['in_app_chat', 'show_email'];
+const OCR_STATUS_VALUES = ['success', 'degraded', 'failed', 'skipped'];
+const OBJECT_STATUS_VALUES = ['success', 'skipped', 'unavailable', 'error', 'degraded'];
+
+function parseAnalyzeResult(req) {
+  if (req.analyzeResult && typeof req.analyzeResult === 'object') {
+    return req.analyzeResult;
+  }
+  const raw = req.body?.analyzeResult ?? req.body?.aiAnalyzeResult;
+  if (raw == null || raw === '') {
+    return null;
+  }
+  if (typeof raw === 'object') {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function mapOcrStatusForMetadata(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'success') return 'success';
+  if (normalized === 'degraded' || normalized === 'no_regions') return 'degraded';
+  if (normalized === 'error') return 'failed';
+  return 'skipped';
+}
+
+function mapObjectStatusForMetadata(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'success') return 'success';
+  if (normalized === 'unavailable') return 'unavailable';
+  if (normalized === 'error') return 'error';
+  if (normalized === 'degraded') return 'degraded';
+  return 'skipped';
+}
+
+function mapDetectedObjects(aiResponse) {
+  const block = aiResponse?.object_detection || aiResponse?.objectDetection;
+  if (!block || typeof block !== 'object') return [];
+
+  const rawList = block.detected_objects || block.detectedObjects || [];
+  if (!Array.isArray(rawList)) return [];
+
+  const source = block.model || 'object_v1';
+  return rawList
+    .map((item) => {
+      const className = String(item?.class_name || item?.className || '').trim();
+      if (!className) return null;
+      const confidence = Number(item?.confidence ?? 0);
+      const bbox = Array.isArray(item?.bbox) ? item.bbox.map((n) => Number(n)) : [];
+      return {
+        className,
+        confidence: Number.isFinite(confidence) ? confidence : 0,
+        bbox: bbox.length === 4 ? bbox : undefined,
+        source,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildAiMetadata(aiResponse, { embeddingVector } = {}) {
+  if (!aiResponse || typeof aiResponse !== 'object') {
+    const hasVector = Array.isArray(embeddingVector) && embeddingVector.length > 0;
+    if (!hasVector) return {};
+    return {
+      pipelineVersion: 'analyze_v1',
+      embeddingAvailable: true,
+      embeddingDimension: embeddingVector.length,
+      processedAt: new Date(),
+    };
+  }
+
+  const models = aiResponse.models || {};
+  const ocr = aiResponse.ocr || {};
+  const ocrStatus = mapOcrStatusForMetadata(ocr.status);
+  const ocrFields =
+    ocr && typeof ocr === 'object' && Object.keys(ocr).length > 0 ? ocr : null;
+
+  const objectBlock = aiResponse.object_detection || aiResponse.objectDetection || {};
+  const objectStatus = mapObjectStatusForMetadata(objectBlock.status);
+  const detectedObjects = mapDetectedObjects(aiResponse);
+
+  const embeddingAvailable =
+    aiResponse.embedding_available === true ||
+    aiResponse.embeddingAvailable === true ||
+    (Array.isArray(embeddingVector) && embeddingVector.length > 0);
+
+  const metadata = {
+    pipelineVersion: models.pipeline_version || models.pipelineVersion || 'analyze_v1',
+    embeddingModel: models.embedding || 'unknown',
+    embeddingDimension:
+      models.embedding_dimension ??
+      models.embeddingDimension ??
+      aiResponse.embedding_dimension ??
+      aiResponse.embeddingDimension ??
+      512,
+    embeddingAvailable,
+    captionModel: models.caption || models.captionModel || '',
+    ocrModel: models.ocr || 'unknown',
+    objectModel: models.object || objectBlock.model || '',
+    ocrStatus: OCR_STATUS_VALUES.includes(ocrStatus) ? ocrStatus : 'skipped',
+    objectStatus: OBJECT_STATUS_VALUES.includes(objectStatus) ? objectStatus : 'skipped',
+    detectionCount: detectedObjects.length,
+    ocrFields,
+    processedAt: new Date(),
+    processingTimeMs: aiResponse.processing_time_ms ?? aiResponse.processingTimeMs ?? 0,
+  };
+
+  const suggestedCategory = suggestCategoryFromDetections(detectedObjects);
+  if (suggestedCategory) {
+    metadata.suggestedCategory = suggestedCategory;
+  }
+
+  return metadata;
+}
 
 function validateCreateItemFields(body) {
   const required = [
@@ -125,44 +254,95 @@ function validateCreateItemFields(body) {
   return { location, secondaryLocation, contactPreference };
 }
 
+function buildImageFormData(file, extraFields = {}) {
+  const formData = new FormData();
+  const blob = new Blob([file.buffer], { type: file.mimetype });
+  formData.append('image', blob, file.originalname || 'image.jpg');
+  for (const [key, value] of Object.entries(extraFields)) {
+    if (value != null && value !== '') {
+      formData.append(key, String(value));
+    }
+  }
+  return formData;
+}
+
+async function extractOcr(req, res, next) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+
+    const documentType = (req.body?.document_type || 'auto').trim().toLowerCase();
+    const formData = buildImageFormData(req.file, { document_type: documentType });
+    const data = await postMultipart('/api/v1/ocr/extract', formData, {
+      timeout: OCR_TIMEOUT_MS,
+    });
+    return res.status(200).json(data);
+  } catch (err) {
+    const mapped = mapAiServiceError(err);
+    if (mapped.status === 503) {
+      return res.status(503).json(mapped.body);
+    }
+    if (mapped.status === 422) {
+      return res.status(422).json(mapped.body);
+    }
+    return next(err);
+  }
+}
+
 async function processImage(req, res, next) {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image provided' });
     }
 
-    const fastApiBase = process.env.FASTAPI_URL?.trim().replace(/\/$/, '');
-    if (!fastApiBase) {
-      return res.status(503).json({
-        error: 'AI service unavailable',
-        fallback: true,
-      });
-    }
-
-    const formData = new FormData();
-    const blob = new Blob([req.file.buffer], { type: req.file.mimetype });
-    formData.append('image', blob, req.file.originalname || 'image.jpg');
-
-    try {
-      const aiResponse = await axios.post(`${fastApiBase}/ai/process-image`, formData, {
-        timeout: 15000,
-      });
-      return res.status(200).json(aiResponse.data);
-    } catch (err) {
-      const status = err.response?.status;
-      const isTimeout = err.code === 'ECONNABORTED';
-      const is5xx = typeof status === 'number' && status >= 500 && status < 600;
-
-      if (isTimeout || is5xx || !err.response) {
-        return res.status(503).json({
-          error: 'AI service unavailable',
-          fallback: true,
-        });
-      }
-
-      return next(err);
-    }
+    const formData = buildImageFormData(req.file, {
+      category: req.body?.category || '',
+      location: req.body?.location || '',
+    });
+    const data = await postMultipart('/ai/process-image', formData, {
+      timeout: DEFAULT_TIMEOUT_MS,
+    });
+    return res.status(200).json(data);
   } catch (err) {
+    const mapped = mapAiServiceError(err);
+    if (mapped.status === 503) {
+      return res.status(503).json(mapped.body);
+    }
+    return next(err);
+  }
+}
+
+async function analyzeImage(req, res, next) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+
+    const documentType = (req.body?.document_type || 'auto').trim().toLowerCase();
+    const formData = buildImageFormData(req.file, {
+      category: req.body?.category || '',
+      location: req.body?.location || '',
+      document_type: documentType,
+      title: req.body?.title || '',
+      description: req.body?.description || '',
+    });
+    const data = await callAnalyzeImage(formData);
+    const visionStatus = data?.vision_status || data?.visionStatus || 'unknown';
+    const captionWords = (data?.caption || '').trim().split(/\s+/).filter(Boolean).length;
+    console.info(
+      `[analyzeImage] vision_status=${visionStatus} caption_words=${captionWords} ` +
+        `ocr_success=${Boolean(data?.ocr?.success)} message=${JSON.stringify(data?.vision_message || '')}`,
+    );
+    return res.status(200).json(data);
+  } catch (err) {
+    const mapped = mapAiServiceError(err);
+    if (mapped.status === 503) {
+      return res.status(503).json(mapped.body);
+    }
+    if (mapped.status === 422) {
+      return res.status(422).json(mapped.body);
+    }
     return next(err);
   }
 }
@@ -186,7 +366,20 @@ async function createItem(req, res, next) {
       );
     }
 
-    const embeddingVector = parseEmbeddingVector(req.body.embeddingVector);
+    const clientEmbedding = parseEmbeddingVector(req.body.embeddingVector);
+    const aiResponse = parseAnalyzeResult(req);
+
+    const { vector: embeddingVector, available: embeddingResolved } = await resolveItemEmbedding({
+      body: req.body,
+      file: req.file,
+      aiResponse,
+      clientVector: clientEmbedding,
+    });
+
+    const detectedObjects = mapDetectedObjects(aiResponse);
+    const aiMetadata = buildAiMetadata(aiResponse, { embeddingVector });
+    const embeddingAvailable =
+      embeddingResolved === true || aiMetadata.embeddingAvailable === true;
 
     const secondaryLocationName =
       secondaryLocation && req.body.secondaryLocationName
@@ -212,7 +405,13 @@ async function createItem(req, res, next) {
       location,
       imageFileId: imageFileId || null,
       embeddingVector: embeddingVector || null,
+      embeddingAvailable,
+      aiMetadata,
     };
+
+    if (detectedObjects.length > 0) {
+      itemPayload.detectedObjects = detectedObjects;
+    }
 
     if (secondaryLocation) {
       itemPayload.secondaryLocation = secondaryLocation;
@@ -224,7 +423,7 @@ async function createItem(req, res, next) {
     res.status(201).json({ itemId: item._id });
 
     setImmediate(() => {
-      triggerMatching(item).catch(console.error);
+      triggerMatchingWithRetry(item).catch(console.error);
     });
 
     return undefined;
@@ -304,6 +503,14 @@ async function streamImage(req, res, next) {
     const fileId = item.imageFileId;
     const downloadStream = getImageStream(fileId);
 
+    downloadStream.on('file', (file) => {
+      if (file?.contentType) {
+        res.set('Content-Type', file.contentType);
+      } else {
+        res.set('Content-Type', 'image/jpeg');
+      }
+    });
+
     downloadStream.on('error', (err) => {
       if (err.code === 'ENOENT' || err.name === 'MongoRuntimeError') {
         return res.status(404).json({ error: 'Image file not found' });
@@ -311,7 +518,9 @@ async function streamImage(req, res, next) {
       return next(err);
     });
 
-    res.set('Content-Type', 'image/jpeg');
+    if (!res.getHeader('Content-Type')) {
+      res.set('Content-Type', 'image/jpeg');
+    }
     downloadStream.pipe(res);
     return undefined;
   } catch (err) {
@@ -358,7 +567,9 @@ async function updateStatus(req, res, next) {
 }
 
 module.exports = {
+  extractOcr,
   processImage,
+  analyzeImage,
   createItem,
   getItems,
   getItemById,
