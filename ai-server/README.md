@@ -1,3 +1,15 @@
+---
+title: Hawalay AI Backend
+emoji: 🔍
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+suggested_hardware: cpu-upgrade
+short_description: FastAPI OCR (YOLO + EasyOCR), Gemini caption/embeddings, and MongoDB matching for Hawalay.
+---
+
 # Hawalay AI Server
 
 Modular FastAPI microservice for Hawalay FYP AI features.
