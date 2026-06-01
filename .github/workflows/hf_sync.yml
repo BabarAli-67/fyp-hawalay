@@ -1,5 +1,5 @@
-# Sync ai-server/ to Hugging Face Docker Space (monorepo → subtree at Space root).
-# Add repo secret: HF_TOKEN (Hugging Face access token with Write permission).
+# Deploy ai-server/ to Hugging Face Docker Space (clean copy + fresh git history).
+# Repository secret required: HF_TOKEN (Hugging Face token with Write access).
 
 name: Sync ai-server to Hugging Face
 
@@ -14,21 +14,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Split ai-server subtree
-        id: split
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          BRANCH_SHA=$(git subtree split --prefix=ai-server)
-          echo "branch_sha=${BRANCH_SHA}" >> "${GITHUB_OUTPUT}"
-
-      - name: Push to Hugging Face Space
+      - name: Build clean deployment tree and push to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_URL: https://huggingface.co/spaces/babarali356789/hawalay-ai-backend
         run: |
-          git push --force \
-            "https://babarali356789:${HF_TOKEN}@huggingface.co/spaces/babarali356789/hawalay-ai-backend" \
-            "${{ steps.split.outputs.branch_sha }}:main"
+          set -euo pipefail
+
+          if [ -z "${HF_TOKEN}" ]; then
+            echo "::error::HF_TOKEN secret is missing. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          DEPLOY_DIR=$(mktemp -d)
+          echo "Deploy directory: ${DEPLOY_DIR}"
+
+          cp -a ai-server/. "${DEPLOY_DIR}/"
+          cd "${DEPLOY_DIR}"
+
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Deploy ai-server from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+
+          git remote add origin "https://babarali356789:${HF_TOKEN}@huggingface.co/spaces/babarali356789/hawalay-ai-backend"
+          git push --force origin main
