@@ -1,0 +1,34 @@
+# Sync ai-server/ to Hugging Face Docker Space (monorepo → subtree at Space root).
+# Add repo secret: HF_TOKEN (Hugging Face access token with Write permission).
+
+name: Sync ai-server to Hugging Face
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync-to-hf:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Split ai-server subtree
+        id: split
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH_SHA=$(git subtree split --prefix=ai-server)
+          echo "branch_sha=${BRANCH_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push --force \
+            "https://babarali356789:${HF_TOKEN}@huggingface.co/spaces/babarali356789/hawalay-ai-backend" \
+            "${{ steps.split.outputs.branch_sha }}:main"
