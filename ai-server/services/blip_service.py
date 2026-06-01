@@ -1,0 +1,320 @@
+"""Caption generation via Google Gemini Vision API.
+
+File named blip_service for backward compatibility.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from io import BytesIO
+from typing import Any
+
+from google.genai import Client
+from google.genai import types
+from PIL import Image
+
+from config import get_settings
+from utils.gemini_debug import mask_api_key
+from utils.gemini_retry import generate_content_with_retry, is_rate_limit_error
+from utils.report_caption import (
+    compose_caption_prompt,
+    is_weak_report_caption,
+    normalize_caption_output,
+)
+from utils.report_features import compose_features_prompt
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CAPTION_MODEL = "gemini-2.0-flash"
+
+
+def _generate_caption_attempt(
+    client: Client,
+    model: str,
+    image: Any,
+    context: str,
+    ocr_payload: dict[str, Any] | None,
+    gen_config: types.GenerateContentConfig,
+    *,
+    retry: bool = False,
+    detail_retry: bool = False,
+    operation: str = "caption_primary",
+) -> str:
+    prompt = compose_caption_prompt(
+        context=context,
+        retry=retry,
+        detail_retry=detail_retry,
+    )
+    max_attempts = get_settings().gemini_generate_max_attempts
+    response = generate_content_with_retry(
+        client,
+        model=model,
+        contents=[prompt, image],
+        config=gen_config,
+        max_attempts=max_attempts,
+        operation=operation,
+    )
+    return normalize_caption_output(str(getattr(response, "text", None) or ""))
+
+
+def generate_caption(
+    image_bytes: bytes,
+    gemini_api_key: str = "",
+    fallback_text: str = "",
+    *,
+    model_id: str | None = None,
+    client: Client | None = None,
+    context: str = "",
+    ocr_payload: dict[str, Any] | None = None,
+) -> tuple[str, bool]:
+    """
+    Generate a lost-and-found report description with Gemini Vision.
+
+    Returns ``(caption, rate_limited)``.
+    """
+    del gemini_api_key, fallback_text
+
+    settings = get_settings()
+    model = (model_id or settings.gemini_caption_model or DEFAULT_CAPTION_MODEL).strip()
+    if model.startswith("models/"):
+        model = model.removeprefix("models/")
+
+    logger.info(
+        "[caption] generate_caption start model=%s image_bytes=%d client=%s key=%s",
+        model,
+        len(image_bytes or b""),
+        "live" if client is not None else "NONE",
+        mask_api_key(settings.gemini_api_key),
+    )
+
+    if not image_bytes:
+        logger.warning("[caption] abort: empty image bytes — Gemini will NOT be called")
+        return "", False
+
+    if client is None:
+        logger.error(
+            "[caption] abort: gemini Client is None (key=%s). "
+            "Set GEMINI_API_KEY in ai-server/.env and restart python main.py",
+            mask_api_key(settings.gemini_api_key),
+        )
+        return "", False
+
+    try:
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        logger.info("[caption] PIL decode ok size=%sx%s", image.width, image.height)
+        gen_config = types.GenerateContentConfig(
+            temperature=0.58,
+            max_output_tokens=380,
+        )
+        caption = _generate_caption_attempt(
+            client,
+            model,
+            image,
+            context,
+            ocr_payload,
+            gen_config,
+            detail_retry=False,
+            operation="caption_primary",
+        )
+        logger.info(
+            "[caption] primary result words=%d chars=%d preview=%r",
+            len(caption.split()),
+            len(caption),
+            caption[:120],
+        )
+
+        if settings.gemini_caption_quality_retry and is_weak_report_caption(caption, ocr_payload):
+            logger.info(
+                "[caption] weak caption (%d words) — quality retry enabled",
+                len(caption.split()),
+            )
+            caption = _generate_caption_attempt(
+                client,
+                model,
+                image,
+                context,
+                ocr_payload,
+                gen_config,
+                detail_retry=False,
+                retry=True,
+                operation="caption_quality_retry",
+            )
+            logger.info(
+                "[caption] quality retry result words=%d chars=%d",
+                len(caption.split()),
+                len(caption),
+            )
+        elif is_weak_report_caption(caption, ocr_payload):
+            logger.info(
+                "[caption] weak caption (%d words) but GEMINI_CAPTION_QUALITY_RETRY=false — "
+                "keeping primary result (no second API call)",
+                len(caption.split()),
+            )
+
+        if caption.strip():
+            logger.info("[caption] generate_caption done — SUCCESS")
+        else:
+            logger.warning(
+                "[caption] generate_caption done — empty caption after Gemini response "
+                "(check logs above for HTTP errors or blocked content)"
+            )
+        return caption, False
+    except Exception as exc:
+        rate_limited = is_rate_limit_error(exc)
+        if rate_limited:
+            logger.error(
+                "[caption] generate_caption FAILED — rate limited model=%s",
+                model,
+                exc_info=True,
+            )
+        else:
+            logger.error(
+                "[caption] generate_caption FAILED model=%s error=%s",
+                model,
+                exc,
+                exc_info=True,
+            )
+        return "", rate_limited
+
+
+def generate_features(
+    image_bytes: bytes,
+    gemini_api_key: str = "",
+    *,
+    model_id: str | None = None,
+    client: Client | None = None,
+    context: str = "",
+) -> tuple[str, bool]:
+    """Generate distinctive-feature bullet list with Gemini Vision."""
+    del gemini_api_key
+
+    if not image_bytes or client is None:
+        logger.warning(
+            "[features] skip: image_bytes=%d client=%s",
+            len(image_bytes or b""),
+            "live" if client is not None else "NONE",
+        )
+        return "", False
+
+    settings = get_settings()
+    model = (model_id or settings.gemini_caption_model or DEFAULT_CAPTION_MODEL).strip()
+    if model.startswith("models/"):
+        model = model.removeprefix("models/")
+
+    try:
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        prompt = compose_features_prompt(context=context)
+        response = generate_content_with_retry(
+            client,
+            model=model,
+            contents=[prompt, image],
+            max_attempts=get_settings().gemini_generate_max_attempts,
+            operation="features_primary",
+        )
+        return str(getattr(response, "text", None) or "").strip(), False
+    except Exception as exc:
+        rate_limited = is_rate_limit_error(exc)
+        logger.error(
+            "[features] generate_features FAILED model=%s rate_limited=%s",
+            model,
+            rate_limited,
+            exc_info=True,
+        )
+        return "", rate_limited
+
+
+class BlipService:
+    """Caption generation via Gemini (module id ``blip`` kept for API compatibility)."""
+
+    MODULE = "blip"
+
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        gemini_api_key: str = "",
+        client: Client | None = None,
+    ) -> None:
+        self._model_id = (model_id or get_settings().gemini_caption_model or DEFAULT_CAPTION_MODEL).strip()
+        self._gemini_api_key = gemini_api_key
+        self._client = client
+
+    @property
+    def status(self) -> dict[str, Any]:
+        key_configured = bool(get_settings().gemini_api_key.strip() or self._gemini_api_key.strip())
+        client_live = self._client is not None
+        if key_configured and not client_live:
+            message = (
+                "GEMINI_API_KEY is set but Gemini client was not initialized — "
+                "restart ai-server after updating ai-server/.env"
+            )
+        elif key_configured:
+            message = "Gemini caption API configured"
+        else:
+            message = "GEMINI_API_KEY not set in ai-server/.env"
+        return {
+            "ready": key_configured and client_live,
+            "client_initialized": client_live,
+            "key_configured": key_configured,
+            "module": self.MODULE,
+            "provider": "google_gemini",
+            "message": message,
+            "model_id": self._model_id,
+            "gemini_configured": key_configured and client_live,
+            "inference_url": "https://generativelanguage.googleapis.com",
+        }
+
+    async def caption(
+        self,
+        image_bytes: bytes,
+        *,
+        fallback_text: str = "",
+        context: str = "",
+        ocr_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        caption, rate_limited = await asyncio.to_thread(
+            generate_caption,
+            image_bytes,
+            "",
+            fallback_text,
+            model_id=self._model_id,
+            client=self._client,
+            context=context,
+            ocr_payload=ocr_payload,
+        )
+        logger.info(
+            "[caption] BlipService.caption done status=%s rate_limited=%s words=%d",
+            "success" if caption else "degraded",
+            rate_limited,
+            len(caption.split()),
+        )
+        return {
+            "status": "success" if caption else "degraded",
+            "module": self.MODULE,
+            "model_id": self._model_id,
+            "caption": caption,
+            "rate_limited": rate_limited,
+        }
+
+    async def features(
+        self,
+        image_bytes: bytes,
+        *,
+        context: str = "",
+    ) -> dict[str, Any]:
+        raw, rate_limited = await asyncio.to_thread(
+            generate_features,
+            image_bytes,
+            "",
+            model_id=self._model_id,
+            client=self._client,
+            context=context,
+        )
+        return {
+            "status": "success" if raw else "degraded",
+            "module": self.MODULE,
+            "model_id": self._model_id,
+            "features_text": raw,
+            "rate_limited": rate_limited,
+        }
