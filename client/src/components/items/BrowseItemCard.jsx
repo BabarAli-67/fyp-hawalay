@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Badge } from '../ui/Badge.jsx';
+import { ItemImage } from './ItemImage.jsx';
 
 const STATUS_CLASS = {
   active: 'bg-secondary-container text-on-secondary-container',
@@ -25,13 +26,11 @@ export function BrowseItemCard({ item }) {
       className="block w-full bg-surface rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden active:scale-[0.99] transition-transform"
     >
       <div className="h-36 w-full relative bg-surface-container">
-        {item.imageUrl ? (
-          <img alt="" className="w-full h-full object-cover" src={item.imageUrl} loading="lazy" />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
-            <span className="material-symbols-outlined text-[48px] text-outline-variant">image</span>
-          </div>
-        )}
+        <ItemImage
+          itemId={item._id}
+          hasImage={item.hasImage}
+          loading="lazy"
+        />
         <Badge variant={reportVariant} label={reportLabel} />
       </div>
       <div className="p-md space-y-xs">

@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Logo } from '../Logo.jsx';
 import { UserAvatar } from '../UserAvatar.jsx';
+import { InstallAppButton } from '../pwa/InstallAppButton.jsx';
 
 /**
  * dashboard.html — Top App Bar
@@ -37,11 +38,13 @@ const NAV_LINK_INACTIVE = 'font-label-sm text-primary hover:opacity-80 transitio
 
 const NAV_LINK_ACTIVE = 'font-label-sm text-primary font-bold';
 
-export function Navbar({ user, unreadCount = 0, onLogout }) {
+export function Navbar({ user, unreadCount = 0, chatUnreadCount = 0, onLogout }) {
   const location = useLocation();
   const loginActive = location.pathname === '/login';
   const registerActive = location.pathname === '/register';
   const notificationsActive = location.pathname.startsWith('/notifications');
+  const chatsActive =
+    location.pathname === '/chats' || location.pathname.startsWith('/chat/');
 
   return (
     <header className={HEADER}>
@@ -52,6 +55,7 @@ export function Navbar({ user, unreadCount = 0, onLogout }) {
             <h1 className={BRAND_TITLE}>Hawalay</h1>
           </Link>
           <div className="flex items-center gap-md">
+            <InstallAppButton />
             <Link
               to="/login"
               className={loginActive ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}
@@ -79,6 +83,28 @@ export function Navbar({ user, unreadCount = 0, onLogout }) {
             </Link>
           </div>
           <div className="flex items-center gap-md">
+            <InstallAppButton />
+            <Link
+              to="/chats"
+              className={chatsActive ? NOTIFICATIONS_NAV_ACTIVE : NOTIFICATIONS_NAV_INACTIVE}
+              aria-current={chatsActive ? 'page' : undefined}
+              aria-label="Messages"
+            >
+              <span className="relative inline-flex items-center justify-center">
+                <span
+                  className="material-symbols-outlined"
+                  data-icon="chat"
+                  style={chatsActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                >
+                  chat
+                </span>
+                {chatUnreadCount > 0 ? (
+                  <span className={NOTIFICATIONS_BADGE} aria-label={`${chatUnreadCount} unread messages`}>
+                    {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                  </span>
+                ) : null}
+              </span>
+            </Link>
             <Link
               to="/notifications"
               className={notificationsActive ? NOTIFICATIONS_NAV_ACTIVE : NOTIFICATIONS_NAV_INACTIVE}

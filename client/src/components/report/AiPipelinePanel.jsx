@@ -1,33 +1,50 @@
 const PIPELINE_STEPS = [
-  { id: 'ocr', label: 'OCR Text Extraction', status: 'coming_soon' },
-  { id: 'blip', label: 'BLIP Caption Generation', status: 'coming_soon' },
-  { id: 'clip', label: 'CLIP Embedding Generation', status: 'active' },
-  { id: 'match', label: 'Smart Matching', status: 'coming_soon' },
+  { id: 'ocr', label: 'OCR text extraction' },
+  { id: 'features', label: 'Distinctive features' },
+  { id: 'blip', label: 'AI description' },
+  { id: 'clip', label: 'Embedding generation' },
+  { id: 'match', label: 'Smart matching' },
 ];
 
 /**
- * Visual AI pipeline — educational UI; BLIP/CLIP reflect current FastAPI proxy when image processed.
+ * AI pipeline status on the report form (OCR + features + caption + embedding).
  */
-export function AiPipelinePanel({ hasImage, captionReady, embeddingReady }) {
+export function AiPipelinePanel({
+  hasImage,
+  ocrReady,
+  featuresReady,
+  captionReady,
+  embeddingReady,
+}) {
   function stepLabel(step) {
+    if (step.id === 'ocr') {
+      if (!hasImage) return 'Upload an image';
+      if (ocrReady) return 'Text extracted';
+      return 'Pending upload processing';
+    }
+    if (step.id === 'features') {
+      if (!hasImage) return 'Upload an image';
+      if (featuresReady) return 'Feature bullets ready';
+      return 'Waiting for image';
+    }
     if (step.id === 'blip') {
       if (!hasImage) return 'Upload an image';
-      if (captionReady) return 'Caption received';
-      return 'Coming Soon';
+      if (captionReady) return 'Description ready';
+      return 'Waiting for image';
     }
     if (step.id === 'clip') {
       if (!hasImage) return 'Upload an image';
       if (embeddingReady) return 'Embedding received';
-      return 'Coming Soon';
+      return 'Waiting for image';
     }
-    return 'Coming Soon';
   }
 
-  function stepTone(step) {
-    if (step.id === 'blip' && captionReady) return 'text-primary';
-    if (step.id === 'clip' && embeddingReady) return 'text-primary';
-    if (step.status === 'coming_soon') return 'text-on-surface-variant';
-    return 'text-on-surface-variant';
+  function stepDone(step) {
+    if (step.id === 'ocr') return ocrReady;
+    if (step.id === 'features') return featuresReady;
+    if (step.id === 'blip') return captionReady;
+    if (step.id === 'clip') return embeddingReady;
+    return false;
   }
 
   return (
@@ -39,18 +56,16 @@ export function AiPipelinePanel({ hasImage, captionReady, embeddingReady }) {
           </span>
           <div className="flex-1 min-w-0">
             <p className="font-label-sm text-on-surface">{step.label}</p>
-            <p className={`font-caption ${stepTone(step)}`}>
-              {step.id === 'ocr' || step.id === 'match' ? 'Coming Soon' : stepLabel(step)}
-              {/* TODO: Wire OCR via FastAPI when OCR endpoint is ready */}
-              {/* TODO: Wire smart matching when matchingService is implemented */}
+            <p
+              className={`font-caption ${
+                stepDone(step) ? 'text-primary' : 'text-on-surface-variant'
+              }`}
+            >
+              {step.id === 'match' ? 'After report submit (background)' : stepLabel(step)}
             </p>
           </div>
           <span className="material-symbols-outlined text-[18px] text-on-surface-variant">
-            {step.id === 'blip' && captionReady
-              ? 'check_circle'
-              : step.id === 'clip' && embeddingReady
-                ? 'check_circle'
-                : 'schedule'}
+            {stepDone(step) ? 'check_circle' : 'schedule'}
           </span>
         </li>
       ))}

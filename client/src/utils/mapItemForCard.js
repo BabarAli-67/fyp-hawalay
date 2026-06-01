@@ -1,5 +1,3 @@
-const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
-
 /** Normalize API item document for ItemCard / profile lists. */
 export function mapItemForCard(item) {
   return {
@@ -10,8 +8,7 @@ export function mapItemForCard(item) {
     locationName: item.locationName,
     date: item.date ? new Date(item.date).toISOString().slice(0, 10) : '',
     status: item.status ?? 'active',
-    imageUrl:
-      item.imageFileId && API_BASE ? `${API_BASE}/api/items/${item._id}/image` : null,
+    hasImage: Boolean(item.imageFileId),
   };
 }
 

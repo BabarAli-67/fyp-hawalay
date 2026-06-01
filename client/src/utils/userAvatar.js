@@ -2,7 +2,7 @@ const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
 export function isApiAvatarUrl(url) {
   if (!url || typeof url !== 'string') return false;
-  return url.includes('/api/users/me/avatar');
+  return /\/api\/users\/(?:me|[^/]+)\/avatar/.test(url);
 }
 
 export function resolveAvatarUrl(avatarUrl) {

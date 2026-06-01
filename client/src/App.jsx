@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { GoogleOAuthProvider } from '@react-oauth/google';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout.jsx';
+import ChatNotifyListener from './components/chat/ChatNotifyListener.jsx';
 import { PrivateRoute } from './components/routing/PrivateRoute.jsx';
 import { SplashScreen } from './components/ui/splash-screen.jsx';
 import { useAuth } from './context/AuthContext.jsx';
@@ -15,35 +16,39 @@ import ReportPage from './pages/ReportPage.jsx';
 import BrowseFeedPage from './pages/BrowseFeedPage.jsx';
 import MatchResultsPage from './pages/MatchResultsPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
+import ChatsPage from './pages/ChatsPage.jsx';
 import NotificationsPage from './pages/NotificationsPage.jsx';
 import ProfilePage from './pages/ProfilePage.jsx';
 import ItemDetailsPage from './pages/ItemDetailsPage.jsx';
 import OfflineExperiencePage from './pages/OfflineExperiencePage.jsx';
-import axiosInstance from './api/axiosInstance.js';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
 function AppShell() {
-  const { user, logout } = useAuth();
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  const fetchUnreadCount = useCallback(() => {
-    if (!user) {
-      setUnreadCount(0);
-      return;
-    }
-    axiosInstance
-      .get('/api/notifications/unread-count')
-      .then((res) => setUnreadCount(res.data?.count ?? 0))
-      .catch(() => setUnreadCount(0));
-  }, [user]);
+  const { user, logout, unreadCount } = useAuth();
+  const location = useLocation();
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
 
   useEffect(() => {
-    fetchUnreadCount();
-  }, [fetchUnreadCount]);
+    if (location.pathname === '/chats' || location.pathname.startsWith('/chat/')) {
+      setChatUnreadCount(0);
+    }
+  }, [location.pathname]);
+
+  const handleChatUnreadIncrement = useCallback(() => {
+    setChatUnreadCount((count) => count + 1);
+  }, []);
 
   return (
-    <AppLayout user={user} unreadCount={unreadCount} onLogout={logout} />
+    <>
+      {user ? <ChatNotifyListener onUnreadIncrement={handleChatUnreadIncrement} /> : null}
+      <AppLayout
+        user={user}
+        unreadCount={unreadCount}
+        chatUnreadCount={chatUnreadCount}
+        onLogout={logout}
+      />
+    </>
   );
 }
 
@@ -74,8 +79,9 @@ export default function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/report" element={<ReportPage />} />
             <Route path="/matches" element={<BrowseFeedPage />} />
-            <Route path="/matches/ai" element={<MatchResultsPage />} />
-            <Route path="/chat" element={<Navigate to="/chat/m1" replace />} />
+            <Route path="/matches/ai/:itemId" element={<MatchResultsPage />} />
+            <Route path="/chats" element={<ChatsPage />} />
+            <Route path="/chat" element={<Navigate to="/chats" replace />} />
             <Route path="/chat/:id" element={<ChatPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage />} />

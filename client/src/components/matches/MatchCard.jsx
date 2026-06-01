@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { ItemImage } from '../items/ItemImage.jsx';
 
 const DEFAULT_IMG =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuBOiwfrjNLHId_LTP1ZPQ3I0hSSWLJVMJu5S2MA13Fuf0beDiN_8M7bpcoicK4xJKMCdRAvuQU85sYji7R6qTwp1RFNYw_R1Xf63KhKjdm5lkjq8lE-Zl5wVubGx88wVta9xhpTsaTgvybfI1Prx0vJ-1hX9u3PhkDIfbmU4_3JoaAOcMvFagzs1AwKLUETO7MhLrNeLRSZTjoHuGlysS8mcIzb2sA10Rltu_JFp4csxA6fsLNQCGZIgDPv0-m-BkSv9qvMDIEWydg';
@@ -30,13 +31,23 @@ export function MatchCard({ match }) {
   const pct = Math.round(match.similarityScore * 100);
   const img = match.imageUrl ?? DEFAULT_IMG;
   const borderAccent = match.similarityScore >= 0.85 ? 'border-t-2 border-primary' : '';
+  const detailPath = match.itemId ? `/item/${match.itemId}` : '/matches';
 
   return (
     <article
       className={`bg-surface-container-lowest rounded-xl premium-shadow overflow-hidden active:scale-[0.98] transition-all duration-200 ${borderAccent}`}
     >
-      <div className="relative h-48 w-full">
-        <img alt={match.title} className="w-full h-full object-cover" src={img} />
+      <div className="relative h-48 w-full bg-surface-container-low">
+        {match.itemId ? (
+          <ItemImage
+            itemId={match.itemId}
+            hasImage={match.hasImage !== false}
+            className="w-full h-full object-cover"
+            placeholderClassName="absolute inset-0 flex items-center justify-center bg-surface-container-low"
+          />
+        ) : (
+          <img alt={match.title} className="w-full h-full object-cover" src={img} />
+        )}
         <div
           className={`absolute top-md right-md px-md py-xs rounded-full font-label-sm flex items-center gap-xs shadow-md ${scoreBadgeClasses(
             match.similarityScore,
@@ -65,7 +76,7 @@ export function MatchCard({ match }) {
         </div>
         <div className="flex gap-sm mt-md">
           <Link
-            to="/item"
+            to={detailPath}
             className="flex-1 py-xs rounded-lg border border-outline text-outline font-label-sm hover:bg-surface-container transition-colors flex items-center justify-center"
           >
             View Details

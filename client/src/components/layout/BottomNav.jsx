@@ -3,6 +3,12 @@ import { Link, useLocation } from 'react-router-dom';
 const NAV =
   'fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-safe h-20 bg-surface/70 backdrop-blur-xl rounded-t-xl shadow-lg';
 
+/** Tailwind offset matching nav `h-20` (5rem / 80px). */
+export const BOTTOM_NAV_OFFSET_CLASS = 'bottom-20';
+
+/** Main outlet clearance when bottom nav is visible (AppLayout). */
+export const BOTTOM_NAV_CLEARANCE_CLASS = 'pb-24';
+
 const TAB_BASE =
   'flex flex-col items-center justify-center transition-all duration-200 cursor-pointer px-3 py-1 rounded-xl active:scale-98';
 
@@ -10,11 +16,15 @@ const TAB_ACTIVE = `${TAB_BASE} text-primary font-bold`;
 
 const TAB_INACTIVE = `${TAB_BASE} text-on-surface-variant hover:bg-surface-container-high/50`;
 
+const MESSAGES_BADGE =
+  'absolute -top-0.5 -right-0.5 min-h-4 min-w-4 px-1 flex items-center justify-center rounded-full bg-tertiary-container text-on-tertiary-container text-[10px] font-bold';
+
 /** Main app tab bar — rendered from AppLayout on authenticated tab routes. */
-export function BottomNav() {
+export function BottomNav({ chatUnreadCount = 0 }) {
   const { pathname } = useLocation();
   const homeActive = pathname === '/dashboard';
   const searchActive = pathname === '/matches' || pathname.startsWith('/matches/');
+  const chatsActive = pathname === '/chats' || pathname.startsWith('/chat/');
   const profileActive = pathname === '/profile';
 
   return (
@@ -51,9 +61,25 @@ export function BottomNav() {
         </div>
         <span className="font-label-sm text-label-sm text-on-surface-variant mt-2">Report</span>
       </Link>
-      <Link to="/notifications" className={TAB_INACTIVE}>
-        <span className="material-symbols-outlined">notifications</span>
-        <span className="font-label-sm text-label-sm">Alerts</span>
+      <Link
+        to="/chats"
+        className={chatsActive ? TAB_ACTIVE : TAB_INACTIVE}
+        aria-current={chatsActive ? 'page' : undefined}
+      >
+        <span className="relative inline-flex items-center justify-center">
+          <span
+            className="material-symbols-outlined"
+            style={chatsActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+          >
+            chat
+          </span>
+          {chatUnreadCount > 0 ? (
+            <span className={MESSAGES_BADGE} aria-label={`${chatUnreadCount} unread messages`}>
+              {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+            </span>
+          ) : null}
+        </span>
+        <span className="font-label-sm text-label-sm">Messages</span>
       </Link>
       <Link
         to="/profile"
@@ -78,6 +104,8 @@ export function shouldShowBottomNav(pathname, user) {
     pathname === '/dashboard' ||
     pathname === '/profile' ||
     pathname.startsWith('/notifications') ||
+    pathname === '/chats' ||
+    pathname.startsWith('/chat/') ||
     pathname.startsWith('/matches') ||
     pathname === '/offline'
   );

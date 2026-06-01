@@ -1,4 +1,5 @@
 import { Badge } from '../ui/Badge.jsx';
+import { ItemImage } from './ItemImage.jsx';
 
 /**
  * dashboard.html — Recent Activity card shell + image area + footer row.
@@ -60,13 +61,11 @@ export function ItemCard({ item, onStatusChange }) {
   return (
     <article className={CARD}>
       <div className={MEDIA}>
-        {item.imageUrl ? (
-          <img alt="" className="w-full h-full object-cover" src={item.imageUrl} />
-        ) : (
-          <div className={PLACEHOLDER_WRAP} aria-hidden>
-            <span className="material-symbols-outlined text-[48px] text-outline-variant">image</span>
-          </div>
-        )}
+        <ItemImage
+          itemId={item._id}
+          hasImage={item.hasImage}
+          placeholderClassName={PLACEHOLDER_WRAP}
+        />
         <Badge variant={reportVariant} label={reportLabel} />
       </div>
       <div className={BODY}>

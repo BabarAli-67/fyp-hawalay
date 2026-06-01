@@ -2,6 +2,9 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import axiosInstance from '../api/axiosInstance.js';
+import { analyzeImage } from '../api/aiService.js';
+import { normalizeAnalyzeResponse } from '../utils/normalizeAnalyzeResponse.js';
+import { pickBrandFromAnalyze, resolveAiDistinctiveFeatures } from '../utils/analyzeExtraction.js';
 import { Logo } from '../components/Logo.jsx';
 import { ReportStepProgress } from '../components/report/ReportStepProgress.jsx';
 import {
@@ -82,12 +85,23 @@ function appendExtendedReportFields(target, fields) {
     secondaryCoordinates,
     secondaryLocationName,
     description,
+    caption,
+    ocrText,
     embeddingVector,
+    analyzeSnapshot,
+    descriptionMode,
+    aiDescription,
+    distinctiveFeaturesMode,
+    aiDistinctiveFeatures,
   } = fields;
 
   if (brand?.trim()) target.brand = brand.trim();
   if (colors?.length) target.colors = JSON.stringify(colors);
-  if (distinctiveFeatures?.trim()) target.distinctiveFeatures = distinctiveFeatures.trim();
+  const effectiveFeatures =
+    distinctiveFeaturesMode === 'ai' && aiDistinctiveFeatures?.trim()
+      ? aiDistinctiveFeatures.trim()
+      : distinctiveFeatures?.trim();
+  if (effectiveFeatures) target.distinctiveFeatures = effectiveFeatures;
   if (contactPreference) target.contactPreference = contactPreference;
   if (isValidGeoCoordinates(secondaryCoordinates)) {
     target.secondaryLocation = JSON.stringify({
@@ -98,8 +112,46 @@ function appendExtendedReportFields(target, fields) {
       target.secondaryLocationName = secondaryLocationName.trim();
     }
   }
-  if (description?.trim()) target.description = description.trim();
+  const effectiveDescription =
+    descriptionMode === 'ai' && aiDescription?.trim() ? aiDescription.trim() : description?.trim();
+  if (effectiveDescription) target.description = effectiveDescription;
+  if (caption?.trim()) target.caption = caption.trim();
+  if (ocrText?.trim()) target.ocrText = ocrText.trim();
   if (embeddingVector) target.embeddingVector = JSON.stringify(embeddingVector);
+  if (analyzeSnapshot?.raw) {
+    target.analyzeResult = JSON.stringify(analyzeSnapshot.raw);
+  }
+}
+
+/**
+ * Populate AI draft fields only — never touch manual description/features.
+ */
+function applyAnalyzeAutofill(analyze, { brand, setters, guards }) {
+  if (!analyze) return;
+
+  const ocr = analyze.ocr;
+  if (ocr) {
+    const text = (analyze.ocrText || ocr.ocrText || '').trim();
+    if (text) setters.setOcrText(text);
+
+    const suggestedBrand = pickBrandFromAnalyze(analyze);
+    if (suggestedBrand && !brand?.trim()) {
+      setters.setBrand(suggestedBrand);
+    }
+  }
+
+  const featuresDraft = resolveAiDistinctiveFeatures(analyze);
+  if (featuresDraft && !guards.aiDistinctiveFeaturesEdited) {
+    setters.setAiDistinctiveFeatures(featuresDraft);
+    setters.setAiFeaturesDraftReady(true);
+  }
+
+  const captionText = (analyze.caption || '').trim();
+  if (captionText && !guards.aiDescriptionEdited) {
+    setters.setCaption(captionText);
+    setters.setAiDescription(captionText);
+    setters.setAiDescriptionDraftReady(true);
+  }
 }
 
 function appendToFormData(formData, obj) {
@@ -114,6 +166,9 @@ export default function ReportPage() {
   const routeLocation = useLocation();
   const initialReportType = routeLocation.state?.reportType === 'found' ? 'found' : 'lost';
   const stepContentRef = useRef(null);
+  const aiDescriptionEditedRef = useRef(false);
+  const aiDistinctiveFeaturesEditedRef = useRef(false);
+  const analyzeRequestRef = useRef(0);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [reportType, setReportType] = useState(initialReportType);
@@ -129,17 +184,26 @@ export default function ReportPage() {
   const [description, setDescription] = useState('');
   const [descriptionMode, setDescriptionMode] = useState('manual');
   const [distinctiveFeatures, setDistinctiveFeatures] = useState('');
+  const [aiDistinctiveFeatures, setAiDistinctiveFeatures] = useState('');
   const [distinctiveFeaturesMode, setDistinctiveFeaturesMode] = useState('manual');
   const [contactPreference, setContactPreference] = useState('in_app_chat');
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [embeddingVector, setEmbeddingVector] = useState(null);
-  const [captionFromAi, setCaptionFromAi] = useState(false);
+  const [embeddingAvailable, setEmbeddingAvailable] = useState(null);
+  const [analyzeSnapshot, setAnalyzeSnapshot] = useState(null);
+  const [aiDescription, setAiDescription] = useState('');
+  const [ocrError, setOcrError] = useState(null);
+  const [ocrText, setOcrText] = useState('');
+  const [caption, setCaption] = useState('');
+  const [aiDescriptionDraftReady, setAiDescriptionDraftReady] = useState(false);
+  const [aiFeaturesDraftReady, setAiFeaturesDraftReady] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [genericError, setGenericError] = useState(null);
   const [aiInfoMessage, setAiInfoMessage] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const [isProcessingOcr, setIsProcessingOcr] = useState(false);
   const [isLocatingPrimary, setIsLocatingPrimary] = useState(false);
   const [isLocatingSecondary, setIsLocatingSecondary] = useState(false);
   const { isOnline } = useOfflineQueue();
@@ -210,14 +274,11 @@ export default function ReportPage() {
     }
   }
 
-  async function processImageWithAi(file) {
-    const formData = new FormData();
-    formData.append('image', file);
-    const { data } = await axiosInstance.post('/api/items/process-image', formData);
-    return data;
-  }
-
   async function handleImageChange(e) {
+    if (isProcessingImage || isProcessingOcr) {
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -227,7 +288,17 @@ export default function ReportPage() {
       return next;
     });
     setAiInfoMessage(null);
-    setCaptionFromAi(false);
+    setAiDescriptionDraftReady(false);
+    setAiFeaturesDraftReady(false);
+    aiDescriptionEditedRef.current = false;
+    aiDistinctiveFeaturesEditedRef.current = false;
+    setEmbeddingAvailable(null);
+    setEmbeddingVector(null);
+    setAnalyzeSnapshot(null);
+    setAiDescription('');
+    setAiDistinctiveFeatures('');
+    setOcrError(null);
+    setOcrText('');
 
     if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
       setFieldErrors((prev) => ({ ...prev, image: 'Only JPEG and PNG images are allowed.' }));
@@ -246,42 +317,95 @@ export default function ReportPage() {
     });
 
     setIsProcessingImage(true);
+    setIsProcessingOcr(true);
+    const requestId = ++analyzeRequestRef.current;
+
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('document_type', 'auto');
+    if (category) formData.append('category', category);
+    if (locationName) formData.append('location', locationName);
+    if (title.trim()) formData.append('title', title.trim());
+    if (description.trim()) formData.append('description', description.trim());
+
     try {
-      const data = await processImageWithAi(file);
-      if (data?.caption) {
-        setDescription(String(data.caption));
-        setCaptionFromAi(true);
-      }
-      if (Array.isArray(data?.embedding_vector)) {
-        setEmbeddingVector(data.embedding_vector);
-      } else if (Array.isArray(data?.embeddingVector)) {
-        setEmbeddingVector(data.embeddingVector);
+      const data = await analyzeImage(formData);
+      if (requestId !== analyzeRequestRef.current) return;
+
+      const analyze = normalizeAnalyzeResponse(data);
+      setAnalyzeSnapshot(analyze);
+
+      if (analyze) {
+        applyAnalyzeAutofill(analyze, {
+          brand,
+          setters: {
+            setBrand,
+            setOcrText,
+            setCaption,
+            setAiDescription,
+            setAiDistinctiveFeatures,
+            setAiDescriptionDraftReady,
+            setAiFeaturesDraftReady,
+          },
+          guards: {
+            aiDescriptionEdited: aiDescriptionEditedRef.current,
+            aiDistinctiveFeaturesEdited: aiDistinctiveFeaturesEditedRef.current,
+          },
+        });
+        const hasAiDraft =
+          (analyze.caption?.trim() && !aiDescriptionEditedRef.current) ||
+          (resolveAiDistinctiveFeatures(analyze) && !aiDistinctiveFeaturesEditedRef.current);
+        if (analyze.visionMessage) {
+          setAiInfoMessage(analyze.visionMessage);
+        } else if (hasAiDraft) {
+          setAiInfoMessage('Extracted description and features are ready under “Extract from Image”.');
+        } else if (analyze.ocr?.success) {
+          setAiInfoMessage('Text extracted from image. Add a description manually or retry AI extraction later.');
+        }
+        if (analyze.embeddingVector) setEmbeddingVector(analyze.embeddingVector);
+        setEmbeddingAvailable(analyze.embeddingAvailable);
       }
     } catch (err) {
+      if (requestId !== analyzeRequestRef.current) return;
       const body = err?.response?.data;
       const status = err?.response?.status;
+      setEmbeddingAvailable(false);
+
       if (status === 503 && body?.fallback) {
-        setAiInfoMessage(
-          descriptionMode === 'ai'
-            ? 'AI caption generation coming soon — describe manually'
-            : 'AI unavailable — describe manually',
+        setOcrError('AI service unavailable — you can still submit manually.');
+        setAiInfoMessage('AI service unavailable — describe manually.');
+      } else if (err?.code === 'ECONNABORTED') {
+        setOcrError(
+          'Analysis timed out — the server may still be busy. Wait and upload again, or describe manually.',
         );
       } else if (typeof body?.error === 'string') {
+        setOcrError(body.error);
         setFieldErrors((prev) => ({ ...prev, image: body.error }));
       } else {
-        setFieldErrors((prev) => ({
-          ...prev,
-          image: 'Could not process image. You can still describe the item manually.',
-        }));
+        setOcrError('Could not analyze image.');
       }
     } finally {
-      setIsProcessingImage(false);
+      if (requestId === analyzeRequestRef.current) {
+        setIsProcessingOcr(false);
+        setIsProcessingImage(false);
+      }
     }
   }
 
   function handleDescriptionChange(value) {
     setDescription(value);
-    setCaptionFromAi(false);
+  }
+
+  function handleAiDescriptionChange(value) {
+    aiDescriptionEditedRef.current = true;
+    setAiDescription(value);
+    setAiDescriptionDraftReady(false);
+  }
+
+  function handleAiDistinctiveFeaturesChange(value) {
+    aiDistinctiveFeaturesEditedRef.current = true;
+    setAiDistinctiveFeatures(value);
+    setAiFeaturesDraftReady(false);
   }
 
   function getValidationValues(extra = {}) {
@@ -293,7 +417,7 @@ export default function ReportPage() {
       locationName,
       locationCoordinates,
       fieldErrors,
-      isProcessingImage,
+      isProcessingImage: isProcessingImage || isProcessingOcr,
       ...extra,
     };
   }
@@ -311,6 +435,7 @@ export default function ReportPage() {
     locationCoordinates,
     fieldErrors,
     isProcessingImage,
+    isProcessingOcr,
   ]);
 
   function handleNext() {
@@ -392,11 +517,18 @@ export default function ReportPage() {
       brand,
       colors,
       distinctiveFeatures,
+      distinctiveFeaturesMode,
+      aiDistinctiveFeatures,
       contactPreference,
       secondaryCoordinates: secondaryLocationCoordinates,
       secondaryLocationName,
       description,
+      aiDescription,
+      descriptionMode,
+      caption: caption || analyzeSnapshot?.caption || '',
+      ocrText: ocrText || analyzeSnapshot?.ocrText || '',
       embeddingVector,
+      analyzeSnapshot,
     };
 
     try {
@@ -421,9 +553,11 @@ export default function ReportPage() {
         appendExtendedReportFields(allFields, extended);
 
         const token = localStorage.getItem('auth_token');
+        const apiBase = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
+        const endpoint = apiBase ? `${apiBase}/api/items` : '/api/items';
         await addToQueue({
           id: crypto.randomUUID(),
-          endpoint: '/api/items',
+          endpoint,
           method: 'POST',
           authHeader: token ? `Bearer ${token}` : '',
           body: JSON.stringify(allFields),
@@ -459,10 +593,10 @@ export default function ReportPage() {
       appendToFormData(formData, formFields);
       if (imageFile) formData.append('image', imageFile);
 
-      await axiosInstance.post('/api/items', formData);
+      const { data } = await axiosInstance.post('/api/items', formData);
 
       toast.success('Report submitted!');
-      navigate('/dashboard');
+      navigate(`/matches/ai/${data.itemId}`, { state: { reportSubmitted: true } });
     } catch (err) {
       const body = err?.response?.data;
       if (body?.errors && Array.isArray(body.errors)) {
@@ -488,6 +622,13 @@ export default function ReportPage() {
       : 'In-app chat when available';
 
   const isLastStep = currentStep === TOTAL_REPORT_STEPS;
+
+  const reviewDescription =
+    descriptionMode === 'ai' && aiDescription.trim() ? aiDescription : description;
+  const reviewDistinctiveFeatures =
+    distinctiveFeaturesMode === 'ai' && aiDistinctiveFeatures.trim()
+      ? aiDistinctiveFeatures
+      : distinctiveFeatures;
 
   return (
     <div className="bg-background text-on-background min-h-screen pb-32">
@@ -565,16 +706,25 @@ export default function ReportPage() {
               onDescriptionModeChange={setDescriptionMode}
               description={description}
               onDescriptionChange={handleDescriptionChange}
+              aiDescription={aiDescription}
+              onAiDescriptionChange={handleAiDescriptionChange}
+              aiDescriptionDraftReady={aiDescriptionDraftReady}
               distinctiveFeaturesMode={distinctiveFeaturesMode}
               onDistinctiveFeaturesModeChange={setDistinctiveFeaturesMode}
               distinctiveFeatures={distinctiveFeatures}
               onDistinctiveFeaturesChange={setDistinctiveFeatures}
+              aiDistinctiveFeatures={aiDistinctiveFeatures}
+              onAiDistinctiveFeaturesChange={handleAiDistinctiveFeaturesChange}
+              aiFeaturesDraftReady={aiFeaturesDraftReady}
               imageFile={imageFile}
               imagePreview={imagePreview}
               onImageChange={handleImageChange}
-              isProcessingImage={isProcessingImage}
-              captionFromAi={captionFromAi}
+              isProcessingImage={isProcessingImage || isProcessingOcr}
+              isProcessingOcr={isProcessingOcr}
+              analyzeSnapshot={analyzeSnapshot}
+              ocrError={ocrError}
               embeddingVector={embeddingVector}
+              embeddingAvailable={embeddingAvailable}
               fieldErrors={fieldErrors}
             />
           ) : null}
@@ -611,8 +761,8 @@ export default function ReportPage() {
               locationName={locationName}
               secondaryLocationName={secondaryLocationName}
               secondaryLocationCoordinates={secondaryLocationCoordinates}
-              description={description}
-              distinctiveFeatures={distinctiveFeatures}
+              description={reviewDescription}
+              distinctiveFeatures={reviewDistinctiveFeatures}
               contactLabel={contactLabel}
               imageFile={imageFile}
               isOnline={isOnline}

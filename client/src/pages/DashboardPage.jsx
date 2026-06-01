@@ -55,6 +55,12 @@ export default function DashboardPage() {
     }
   }
 
+  const firstActiveItem = items.find((item) => item.status === 'active');
+  const smartMatchesTo = firstActiveItem ? `/matches/ai/${firstActiveItem._id}` : '/report';
+  const smartMatchesLabel = firstActiveItem
+    ? `View matches for "${firstActiveItem.title}"`
+    : 'Report an item to start matching';
+
   return (
     <div className="bg-background text-on-background min-h-screen">
       <div className="px-margin-mobile space-y-lg">
@@ -103,7 +109,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex flex-col gap-sm">
             <Link
-              to="/matches"
+              to={smartMatchesTo}
               className="glass-card border border-primary-container/30 p-md rounded-xl flex gap-md items-center shadow-sm"
             >
               <div className="w-12 h-12 rounded-lg bg-primary-container/20 flex items-center justify-center shrink-0">
@@ -112,10 +118,10 @@ export default function DashboardPage() {
                 </span>
               </div>
               <div className="flex-1">
-                <p className="font-h3 text-h3 text-on-surface-variant leading-none mb-1">Potential Match Found</p>
-                <p className="font-caption text-caption text-outline">
-                  A Leather Wallet matches your &quot;Lost&quot; report in Downtown.
+                <p className="font-h3 text-h3 text-on-surface-variant leading-none mb-1">
+                  {firstActiveItem ? 'View Smart Matches' : 'Start Matching'}
                 </p>
+                <p className="font-caption text-caption text-outline">{smartMatchesLabel}</p>
               </div>
               <span className="material-symbols-outlined text-outline-variant">chevron_right</span>
             </Link>

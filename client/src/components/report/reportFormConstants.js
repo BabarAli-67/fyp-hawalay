@@ -13,12 +13,12 @@ export const BRAND_SUGGESTIONS = ['Apple', 'Samsung', 'Nike', 'Lenovo', 'Sony', 
 
 export const DESCRIPTION_MODES = [
   { value: 'manual', label: 'Write yourself' },
-  { value: 'ai', label: 'Generate from image' },
+  { value: 'ai', label: 'Extract from Image' },
 ];
 
 export const FEATURES_MODES = [
   { value: 'manual', label: 'Write yourself' },
-  { value: 'ai', label: 'Extract from image (Coming Soon)' },
+  { value: 'ai', label: 'Extract from Image' },
 ];
 
 export const REPORT_STEPS = [

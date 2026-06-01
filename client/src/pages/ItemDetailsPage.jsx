@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axiosInstance from '../api/axiosInstance.js';
+import { useAuth } from '../context/AuthContext.jsx';
 import { Badge } from '../components/ui/Badge.jsx';
 import { EmptyState } from '../components/ui/EmptyState.jsx';
+import { ItemImage } from '../components/items/ItemImage.jsx';
 import { Spinner } from '../components/ui/Spinner.jsx';
-
-const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
 function formatItemDate(value) {
   if (!value) return '—';
@@ -29,6 +29,7 @@ function statusLabel(status) {
 export default function ItemDetailsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -47,10 +48,10 @@ export default function ItemDetailsPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const imageUrl =
-    item?.imageFileId && API_BASE ? `${API_BASE}/api/items/${item._id}/image` : null;
   const reportVariant = item?.reportType === 'found' ? 'found' : 'lost';
   const reportLabel = item?.reportType === 'found' ? 'FOUND' : 'LOST';
+  const currentUserId = user?._id ? String(user._id) : '';
+  const isOwner = Boolean(item?.ownerId && currentUserId && String(item.ownerId) === currentUserId);
 
   return (
     <div className="bg-background text-on-background min-h-screen pb-24">
@@ -81,13 +82,12 @@ export default function ItemDetailsPage() {
         ) : (
           <>
             <section className="relative w-full h-56 sm:h-72 rounded-xl overflow-hidden bg-surface-container shadow-sm mb-md">
-              {imageUrl ? (
-                <img alt="" className="w-full h-full object-cover" src={imageUrl} />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[64px] text-outline-variant">image</span>
-                </div>
-              )}
+              <ItemImage
+                itemId={item._id}
+                hasImage={Boolean(item.imageFileId)}
+                iconSize="md"
+                placeholderClassName="w-full h-full flex items-center justify-center"
+              />
               <div className="absolute top-3 left-3 flex gap-2">
                 <Badge variant={reportVariant} label={reportLabel} />
                 <span className="px-2 py-1 rounded-md bg-surface/90 text-on-surface text-[10px] font-bold uppercase backdrop-blur-sm">
@@ -164,12 +164,26 @@ export default function ItemDetailsPage() {
               ) : null}
             </section>
 
-            <p className="font-caption text-on-surface-variant text-center mt-lg pb-8">
-              Contact options and claiming will be available in a future release.{' '}
-              <Link to="/matches" className="text-primary underline">
-                Browse more reports
-              </Link>
-            </p>
+            <div className="flex flex-col items-center gap-sm mt-lg pb-8">
+              {isOwner ? (
+                <Link
+                  to={`/matches/ai/${item._id}`}
+                  className="font-label-sm text-primary hover:underline"
+                >
+                  View smart matches for this item
+                </Link>
+              ) : (
+                <p className="font-caption text-on-surface-variant text-center">
+                  Smart matches are only available on your own reports.
+                </p>
+              )}
+              <p className="font-caption text-on-surface-variant text-center">
+                Contact options and claiming will be available in a future release.{' '}
+                <Link to="/matches" className="text-primary underline">
+                  Browse more reports
+                </Link>
+              </p>
+            </div>
           </>
         )}
       </div>

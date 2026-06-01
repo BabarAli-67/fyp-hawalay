@@ -46,6 +46,43 @@ export async function getAllFromQueue() {
   return db.getAll(STORE_NAME);
 }
 
+/** Alias for getAllFromQueue (main thread). */
+export async function getAllQueue() {
+  return getAllFromQueue();
+}
+
+/**
+ * Raw IndexedDB open — same schema as openDB(), usable without the idb ESM wrapper.
+ * Service Worker duplicates this in public/sw.js (cannot import modules).
+ */
+export function openQueueDBRaw() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: false });
+      }
+    };
+  });
+}
+
+/**
+ * Read all queued items via raw IndexedDB (no idb dependency).
+ */
+export async function getAllQueueRaw() {
+  const db = await openQueueDBRaw();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAll();
+    request.onsuccess = () => resolve(request.result ?? []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
 /**
  * @param {string} id
  */
