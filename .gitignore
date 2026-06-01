@@ -70,8 +70,10 @@ pip-log.txt
 ai-server/artifacts/**/*.pt
 ai-server/artifacts/**/*.pth
 !ai-server/artifacts/**/.gitkeep
+!ai-server/artifacts/ocr/weights/best.pt
 *.pt
 *.pth
+!ai-server/artifacts/ocr/weights/best.pt
 *.onnx
 *.weights
 *.h5
