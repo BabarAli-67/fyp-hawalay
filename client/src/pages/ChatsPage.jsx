@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { getChatRooms } from '../api/chatService.js';
+import { fetchAndCacheChatRooms, prefetchChatMessages } from '../api/chatService.js';
 import { PeerAvatar } from '../components/chat/PeerAvatar.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { getCachedRooms } from '../utils/chatCache.js';
 
 function formatMessageTime(value) {
   if (!value) return '';
@@ -59,56 +60,82 @@ export default function ChatsPage() {
   const { user, socket } = useAuth();
   const currentUserId = user?._id ? String(user._id) : '';
 
-  const [rooms, setRooms] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [rooms, setRooms] = useState(() => getCachedRooms() ?? []);
+  const [isLoading, setIsLoading] = useState(() => getCachedRooms() === null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const refreshTimerRef = useRef(null);
 
-  const loadRooms = useCallback(async () => {
+  const loadRooms = useCallback(async ({ background = false } = {}) => {
+    if (!background && getCachedRooms() === null) {
+      setIsLoading(true);
+    } else if (background) {
+      setIsRefreshing(true);
+    }
     setLoadError(null);
     try {
-      const { data } = await getChatRooms();
-      const rows = Array.isArray(data?.rooms) ? data.rooms : [];
+      const rows = await fetchAndCacheChatRooms();
       setRooms(rows);
     } catch (err) {
       const message = err?.response?.data?.error || 'Could not load chats';
-      setLoadError(message);
-      setRooms([]);
-      toast.error(message);
+      if (!background || getCachedRooms() === null) {
+        setLoadError(message);
+        setRooms([]);
+        toast.error(message);
+      }
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, []);
 
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(() => {
+      loadRooms({ background: true });
+    }, 400);
+  }, [loadRooms]);
+
   useEffect(() => {
-    setIsLoading(true);
-    loadRooms();
+    const hasCache = getCachedRooms() !== null;
+    loadRooms({ background: hasCache });
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
   }, [loadRooms]);
 
   useEffect(() => {
     if (!socket) return undefined;
 
-    const refresh = () => {
-      loadRooms();
-    };
-
-    socket.on('chat:message', refresh);
-    window.addEventListener('hawalay:refresh-chats', refresh);
-    window.addEventListener('hawalay:chat-notify', refresh);
-    window.addEventListener('hawalay:match-found', refresh);
+    socket.on('chat:message', scheduleRefresh);
+    window.addEventListener('hawalay:refresh-chats', scheduleRefresh);
+    window.addEventListener('hawalay:chat-notify', scheduleRefresh);
+    window.addEventListener('hawalay:match-found', scheduleRefresh);
 
     return () => {
-      socket.off('chat:message', refresh);
-      window.removeEventListener('hawalay:refresh-chats', refresh);
-      window.removeEventListener('hawalay:chat-notify', refresh);
-      window.removeEventListener('hawalay:match-found', refresh);
+      socket.off('chat:message', scheduleRefresh);
+      window.removeEventListener('hawalay:refresh-chats', scheduleRefresh);
+      window.removeEventListener('hawalay:chat-notify', scheduleRefresh);
+      window.removeEventListener('hawalay:match-found', scheduleRefresh);
     };
-  }, [socket, loadRooms]);
+  }, [socket, scheduleRefresh]);
 
   return (
     <div className="bg-background text-on-background min-h-screen pb-24">
       <div className="px-margin-mobile max-w-2xl mx-auto">
         <section className="mb-lg mt-4">
-          <h2 className="font-h1 text-h1 text-on-surface mb-xs">Messages</h2>
+          <div className="flex items-baseline justify-between gap-sm">
+            <h2 className="font-h1 text-h1 text-on-surface mb-xs">Messages</h2>
+            {isRefreshing ? (
+              <span className="font-caption text-caption text-outline shrink-0" aria-live="polite">
+                Updating…
+              </span>
+            ) : null}
+          </div>
           <p className="font-body-md text-on-surface-variant">
             Chats with people you matched with on lost and found reports.
           </p>
@@ -130,10 +157,7 @@ export default function ChatsPage() {
             <p className="font-body-md text-on-error-container mb-sm">{loadError}</p>
             <button
               type="button"
-              onClick={() => {
-                setIsLoading(true);
-                loadRooms();
-              }}
+              onClick={() => loadRooms()}
               className="font-label-sm text-primary hover:underline"
             >
               Try again
@@ -177,6 +201,9 @@ export default function ChatsPage() {
                   <Link
                     to={`/chat/${matchId}`}
                     className="flex gap-md items-center p-md bg-surface-container-lowest rounded-xl shadow-sm hover:bg-surface-container-low active:scale-[0.99] transition-all"
+                    onMouseEnter={() => prefetchChatMessages(matchId)}
+                    onFocus={() => prefetchChatMessages(matchId)}
+                    onTouchStart={() => prefetchChatMessages(matchId)}
                   >
                     <PeerAvatar name={peerName} />
                     <div className="flex-1 min-w-0">

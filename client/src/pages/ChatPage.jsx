@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { getMessages } from '../api/chatService.js';
-import {
-  BOTTOM_NAV_OFFSET_CLASS,
-  shouldShowBottomNav,
-} from '../components/layout/BottomNav.jsx';
+import { fetchAndCacheMessages } from '../api/chatService.js';
+import { getCachedMessages } from '../utils/chatCache.js';
+import { shouldShowBottomNav } from '../components/layout/BottomNav.jsx';
 import { PeerAvatar } from '../components/chat/PeerAvatar.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useOfflineQueue } from '../hooks/useOfflineQueue.js';
 
 function formatTime(value) {
   try {
@@ -62,6 +61,12 @@ function isPendingMessage(msg) {
   return String(msg._id).startsWith('opt-');
 }
 
+function runAfterLayout(fn) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(fn);
+  });
+}
+
 /**
  * Match chat — REST history + Socket.io (chat:join, chat:send, chat:message, chat:typing, chat:read).
  */
@@ -69,13 +74,24 @@ export default function ChatPage() {
   const { id: matchId } = useParams();
   const { pathname } = useLocation();
   const { user, socket } = useAuth();
+  const { isOnline } = useOfflineQueue();
   const currentUserId = user?._id ? String(user._id) : '';
   const hasBottomNav = shouldShowBottomNav(pathname, user);
+  const chatPanelTopClass = isOnline ? 'top-20' : 'top-32';
+  const chatPanelBottomClass = hasBottomNav ? 'bottom-20' : 'bottom-0';
+  const flowSpacerClass = isOnline
+    ? hasBottomNav
+      ? 'h-[calc(100dvh-10rem)]'
+      : 'h-[calc(100dvh-5rem)]'
+    : hasBottomNav
+      ? 'h-[calc(100dvh-13rem)]'
+      : 'h-[calc(100dvh-8rem)]';
 
   const [messages, setMessages] = useState([]);
   const [participants, setParticipants] = useState([]);
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [typingLabel, setTypingLabel] = useState('');
@@ -85,6 +101,7 @@ export default function ChatPage() {
   const typingTimeoutRef = useRef(null);
   const typingStopRef = useRef(null);
   const matchIdRef = useRef(matchId);
+  const snapScrollRef = useRef(true);
 
   matchIdRef.current = matchId;
 
@@ -92,15 +109,33 @@ export default function ChatPage() {
   const peerUserId = otherParticipant?._id ? String(otherParticipant._id) : '';
   const peerName = otherParticipant?.name || 'Chat';
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = useCallback((behavior = 'smooth') => {
     const list = listRef.current;
+    const anchor = bottomRef.current;
     if (!list) return;
-    list.scrollTop = list.scrollHeight;
+
+    const applyScroll = () => {
+      if (anchor) {
+        anchor.scrollIntoView({ behavior, block: 'end' });
+      }
+      list.scrollTop = list.scrollHeight;
+    };
+
+    applyScroll();
+    runAfterLayout(applyScroll);
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    snapScrollRef.current = true;
+  }, [matchId]);
+
+  useLayoutEffect(() => {
+    if (isLoading || accessDenied) return;
+
+    const behavior = snapScrollRef.current ? 'auto' : 'smooth';
+    scrollToBottom(behavior);
+    snapScrollRef.current = false;
+  }, [messages, isLoading, typingLabel, draft, accessDenied, scrollToBottom]);
 
   const markRead = useCallback(() => {
     if (!socket?.connected || !matchIdRef.current || accessDenied) return;
@@ -115,13 +150,30 @@ export default function ChatPage() {
     }
 
     let cancelled = false;
+    const cached = getCachedMessages(matchId);
+
+    if (cached) {
+      setMessages(cached.messages.map(normalizeApiMessage));
+      setParticipants(cached.participants);
+      setIsLoading(false);
+    } else {
+      setMessages([]);
+      setParticipants([]);
+      setIsLoading(true);
+    }
+    setAccessDenied(false);
+    setLoadError(null);
 
     async function loadHistory() {
-      setIsLoading(true);
+      if (cached) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
       setAccessDenied(false);
       setLoadError(null);
       try {
-        const { data } = await getMessages(matchId);
+        const data = await fetchAndCacheMessages(matchId);
         if (cancelled) return;
         const rows = Array.isArray(data?.messages) ? data.messages : [];
         setMessages(rows.map(normalizeApiMessage));
@@ -131,12 +183,13 @@ export default function ChatPage() {
         if (isAccessDeniedError(err)) {
           setAccessDenied(true);
           setMessages([]);
-        } else {
+        } else if (!cached) {
           setLoadError(err?.response?.data?.error || 'Could not load messages');
         }
       } finally {
         if (!cancelled) {
           setIsLoading(false);
+          setIsRefreshing(false);
         }
       }
     }
@@ -370,9 +423,13 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="bg-surface text-on-surface font-body-md selection:bg-primary-container min-h-screen flex flex-col">
-      <header className="fixed top-0 left-0 w-full z-50 flex items-center px-margin-mobile h-16 bg-surface/70 dark:bg-inverse-surface/70 glass-header shadow-sm border-b border-outline-variant/20">
-        <div className="flex items-center gap-3 w-full">
+    <>
+      <div className={flowSpacerClass} aria-hidden />
+      <div
+        className={`fixed inset-x-0 z-30 flex flex-col overflow-hidden bg-surface text-on-surface font-body-md selection:bg-primary-container ${chatPanelTopClass} ${chatPanelBottomClass}`}
+      >
+      <header className="flex h-16 shrink-0 items-center border-b border-outline-variant/20 bg-surface/70 px-margin-mobile shadow-sm backdrop-blur-lg dark:bg-inverse-surface/70">
+        <div className="flex w-full items-center gap-3">
           <Link
             to="/chats"
             className="active:scale-95 transition-transform duration-200 text-on-surface-variant"
@@ -389,7 +446,7 @@ export default function ChatPage() {
           <div className="flex flex-col min-w-0">
             <h3 className="font-h3 text-label-sm font-bold text-on-surface truncate">{peerName}</h3>
             <span className="font-caption text-on-surface-variant text-[11px]">
-              {typingLabel || 'Match chat'}
+              {typingLabel || (isRefreshing ? 'Syncing…' : 'Match chat')}
             </span>
           </div>
         </div>
@@ -397,9 +454,7 @@ export default function ChatPage() {
 
       <main
         ref={listRef}
-        className={`flex-1 flex flex-col pt-20 px-gutter-mobile min-h-0 overflow-y-auto space-y-lg ${
-          hasBottomNav ? 'pb-44' : 'pb-28'
-        }`}
+        className="flex min-h-0 flex-1 flex-col space-y-lg overflow-y-auto overscroll-contain px-gutter-mobile py-md"
       >
         {isLoading ? (
           <div className="space-y-md animate-pulse" role="status" aria-label="Loading messages">
@@ -479,14 +534,10 @@ export default function ChatPage() {
           <p className="font-caption text-on-surface-variant text-center">{typingLabel}</p>
         ) : null}
 
-        <div ref={bottomRef} />
+        <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
       </main>
 
-      <footer
-        className={`fixed left-0 w-full z-40 p-4 bg-surface/70 glass-header flex flex-col gap-2 border-t border-outline-variant/20 ${
-          hasBottomNav ? BOTTOM_NAV_OFFSET_CLASS : 'bottom-0'
-        }`}
-      >
+      <footer className="flex shrink-0 flex-col gap-2 border-t border-outline-variant/20 bg-surface/70 p-4 backdrop-blur-lg">
         <form onSubmit={handleSend} className="flex items-end gap-3">
           <div className="flex-1 relative flex items-center">
             <textarea
@@ -519,6 +570,7 @@ export default function ChatPage() {
         </form>
         <div className="h-safe" />
       </footer>
-    </div>
+      </div>
+    </>
   );
 }

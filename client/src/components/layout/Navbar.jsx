@@ -12,24 +12,31 @@ import { InstallAppButton } from '../pwa/InstallAppButton.jsx';
  */
 
 const HEADER =
-  'fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-16 bg-surface/70 backdrop-blur-lg shadow-sm';
+  'fixed top-0 left-0 w-full z-50 flex min-w-0 items-center justify-between gap-2 sm:gap-4 px-margin-mobile h-16 bg-surface/70 backdrop-blur-lg shadow-sm';
 
-const GUEST_BRAND_WRAP = 'flex items-center gap-base';
+const GUEST_BRAND_WRAP =
+  'flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-base';
 
-const BRAND_TITLE = 'font-h2 text-h2 font-bold text-primary';
+const BRAND_LINK = 'flex min-w-0 items-center gap-2 overflow-hidden sm:gap-2';
 
-const AUTH_LEFT_WRAP = 'flex items-center gap-3 flex-1 min-w-0';
+const BRAND_TITLE =
+  'min-w-0 truncate font-h2 text-h2 font-bold text-primary max-sm:text-xl';
 
-const USER_NAME = 'font-body-md text-on-surface-variant truncate flex-1 min-w-0';
+const AUTH_LEFT_WRAP = 'flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3';
+
+const USER_NAME =
+  'hidden min-w-0 flex-1 truncate font-body-md text-body-md text-on-surface-variant sm:block';
+
+const ACTIONS_WRAP = 'flex shrink-0 items-center gap-0.5 sm:gap-md';
 
 const ICON_BTN =
-  'w-10 h-10 flex items-center justify-center text-on-surface-variant hover:opacity-80 transition-opacity active:scale-95 duration-200';
+  'flex h-9 w-9 shrink-0 items-center justify-center text-on-surface-variant hover:opacity-80 transition-opacity active:scale-95 duration-200 sm:h-10 sm:w-10';
 
 const NOTIFICATIONS_NAV_ACTIVE =
-  'relative w-10 h-10 flex items-center justify-center text-primary font-bold hover:opacity-80 transition-opacity active:scale-95 duration-200';
+  'relative flex h-9 w-9 shrink-0 items-center justify-center text-primary font-bold hover:opacity-80 transition-opacity active:scale-95 duration-200 sm:h-10 sm:w-10';
 
 const NOTIFICATIONS_NAV_INACTIVE =
-  'relative w-10 h-10 flex items-center justify-center text-on-surface-variant hover:opacity-80 transition-opacity active:scale-95 duration-200';
+  'relative flex h-9 w-9 shrink-0 items-center justify-center text-on-surface-variant hover:opacity-80 transition-opacity active:scale-95 duration-200 sm:h-10 sm:w-10';
 
 const NOTIFICATIONS_BADGE =
   'absolute -top-0.5 -right-0.5 min-h-4 min-w-4 px-1 flex items-center justify-center rounded-full bg-tertiary-container text-on-tertiary-container text-[10px] font-bold';
@@ -51,21 +58,21 @@ export function Navbar({ user, unreadCount = 0, chatUnreadCount = 0, onLogout })
       {user == null ? (
         <>
           <Link to="/login" className={GUEST_BRAND_WRAP}>
-            <Logo size="sm" />
+            <Logo size="sm" className="h-8 w-8 shrink-0 sm:h-10 sm:w-10" />
             <h1 className={BRAND_TITLE}>Hawalay</h1>
           </Link>
-          <div className="flex items-center gap-md">
-            <InstallAppButton />
+          <div className={ACTIONS_WRAP}>
+            <InstallAppButton className="!h-9 !w-9 sm:!h-10 sm:!w-10" />
             <Link
               to="/login"
-              className={loginActive ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}
+              className={`shrink-0 px-1 sm:px-0 ${loginActive ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}`}
               aria-current={loginActive ? 'page' : undefined}
             >
               Login
             </Link>
             <Link
               to="/register"
-              className={registerActive ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}
+              className={`shrink-0 px-1 sm:px-0 ${registerActive ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}`}
               aria-current={registerActive ? 'page' : undefined}
             >
               Register
@@ -75,15 +82,15 @@ export function Navbar({ user, unreadCount = 0, chatUnreadCount = 0, onLogout })
       ) : (
         <>
           <div className={AUTH_LEFT_WRAP}>
-            <UserAvatar user={user} size="sm" />
+            <UserAvatar user={user} size="sm" className="shrink-0" />
             <span className={USER_NAME}>{user.name}</span>
-            <Link to="/dashboard" className="flex items-center gap-2 shrink-0">
-              <Logo size="sm" />
+            <Link to="/dashboard" className={BRAND_LINK}>
+              <Logo size="sm" className="h-8 w-8 shrink-0 sm:h-10 sm:w-10" />
               <h1 className={BRAND_TITLE}>Hawalay</h1>
             </Link>
           </div>
-          <div className="flex items-center gap-md">
-            <InstallAppButton />
+          <div className={ACTIONS_WRAP}>
+            <InstallAppButton className="!h-9 !w-9 sm:!h-10 sm:!w-10" />
             <Link
               to="/chats"
               className={chatsActive ? NOTIFICATIONS_NAV_ACTIVE : NOTIFICATIONS_NAV_INACTIVE}

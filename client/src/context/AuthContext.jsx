@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { toast } from 'react-toastify';
 import axiosInstance from '../api/axiosInstance.js';
 import { connectMatchSocket, disconnectMatchSocket } from '../socket/matchSocket.js';
+import { clearChatCache } from '../utils/chatCache.js';
 
 const AUTH_TOKEN_KEY = 'auth_token';
 const AUTH_USER_KEY = 'auth_user';
@@ -44,6 +45,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     disconnectMatchSocket();
+    clearChatCache();
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
     setToken(null);

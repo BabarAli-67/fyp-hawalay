@@ -16,6 +16,10 @@ export function ScrollToTop() {
   const { pathname } = useLocation();
 
   useEffect(() => {
+    if (pathname.startsWith('/chat/')) {
+      return undefined;
+    }
+
     scrollWindowToTop();
 
     const frameId = requestAnimationFrame(() => {
