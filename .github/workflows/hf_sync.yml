@@ -1,5 +1,5 @@
-# Deploy ai-server/ to Hugging Face Docker Space (clean copy + fresh git history).
-# Repository secret required: HF_TOKEN (Hugging Face token with Write access).
+# Deploy ai-server/ to Hugging Face Docker Space via huggingface_hub (no git subtree).
+# Repository secret required: HF_TOKEN (Write access to the Space).
 
 name: Sync ai-server to Hugging Face
 
@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   sync-to-hf:
     runs-on: ubuntu-latest
@@ -15,10 +18,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build clean deployment tree and push to Hugging Face
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Upload ai-server to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_URL: https://huggingface.co/spaces/babarali356789/hawalay-ai-backend
         run: |
           set -euo pipefail
 
@@ -27,17 +34,41 @@ jobs:
             exit 1
           fi
 
-          DEPLOY_DIR=$(mktemp -d)
-          echo "Deploy directory: ${DEPLOY_DIR}"
+          pip install --quiet "huggingface_hub>=0.26.0"
 
-          cp -a ai-server/. "${DEPLOY_DIR}/"
-          cd "${DEPLOY_DIR}"
+          python <<'PY'
+          import os
+          from pathlib import Path
 
-          git init -b main
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Deploy ai-server from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+          from huggingface_hub import HfApi
 
-          git remote add origin "https://babarali356789:${HF_TOKEN}@huggingface.co/spaces/babarali356789/hawalay-ai-backend"
-          git push --force origin main
+          token = os.environ["HF_TOKEN"].strip()
+          repo_id = "babarali356789/hawalay-ai-backend"
+          folder = Path("ai-server")
+
+          if not folder.is_dir():
+              raise SystemExit("ai-server directory not found in checkout")
+
+          api = HfApi(token=token)
+
+          try:
+              who = api.whoami()
+              print(f"Authenticated as: {who.get('name', who)}")
+          except Exception as exc:
+              raise SystemExit(f"HF_TOKEN auth failed: {exc}") from exc
+
+          sha = os.environ.get("GITHUB_SHA", "")[:7]
+          message = f"Deploy ai-server from GitHub Actions {sha}"
+
+          # Replace Space tree with ai-server contents at repo root (Dockerfile at /).
+          api.upload_folder(
+              folder_path=str(folder),
+              repo_id=repo_id,
+              repo_type="space",
+              path_in_repo=".",
+              commit_message=message,
+              delete_patterns="*",
+          )
+
+          print(f"Uploaded {folder} → https://huggingface.co/spaces/{repo_id}")
+          PY
