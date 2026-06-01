@@ -9,7 +9,9 @@
   "scripts": {
     "dev:server": "npm run dev -w hawalay-server",
     "dev:client": "npm run dev -w hawalay-client",
-    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:ai": "cd ai-server && python main.py",
+    "dev": "concurrently -n client,server \"npm:dev:client\" \"npm:dev:server\"",
+    "dev:all": "concurrently -n client,server,ai \"npm:dev:client\" \"npm:dev:server\" \"npm:dev:ai\"",
     "build:client": "npm run build -w hawalay-client",
     "start:server": "npm run start -w hawalay-server"
   },

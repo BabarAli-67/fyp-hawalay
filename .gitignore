@@ -1,12 +1,96 @@
+# =============================================================================
+# Hawalay — files excluded from Git / production deploys
+# =============================================================================
+
+# --- Dependencies ---
 node_modules/
+**/node_modules/
+
+# --- Environment & secrets (never commit) ---
 .env
-.env.local
+.env.*
+!.env.example
+!**/.env.example
 **/.env
+**/.env.local
+**/.env.*.local
+
+# --- Build outputs (generated on CI / deploy) ---
+client/dist/
+dist/
+build/
+*.tsbuildinfo
+
+# --- Logs & debug ---
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# --- OS junk ---
 .DS_Store
+.DS_Store?
 Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# --- Python (ai-server) ---
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+pip-log.txt
+
+# --- ML weights & large local artifacts (deploy / mount separately) ---
+ai-server/artifacts/**/*.pt
+ai-server/artifacts/**/*.pth
+!ai-server/artifacts/**/.gitkeep
+*.pt
+*.pth
+*.onnx
+*.weights
+*.h5
+*.pkl
+
+# Friend's YOLO/OCR training repo (~600 MB+) — local dev only, not for GitHub/production
+OCR_Model/
+
+# --- Temp & backup ---
 *.bak
 *.tmp
-client/dist/
-client/node_modules/
+.cache/
+.temp/
+
+# --- Deploy tooling ---
+.vercel/
+
+# --- Local audit reports (not for Git) ---
+PRODUCTION_DEPLOYMENT_AUDIT.md
+PRODUCTION_DEPLOYMENT_AUDIT.pdf 
+# --- npm workspaces: root lockfile is canonical ---
 client/package-lock.json
