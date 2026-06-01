@@ -15,7 +15,7 @@ async function getLastMessagesByRoom(matchIds) {
 
   const rows = await Message.aggregate([
     { $match: { chatRoomId: { $in: matchIds } } },
-    { $sort: { createdAt: -1 } },
+    { $sort: { chatRoomId: 1, createdAt: -1 } },
     {
       $group: {
         _id: '$chatRoomId',
@@ -29,31 +29,52 @@ async function getLastMessagesByRoom(matchIds) {
   return new Map(rows.map((row) => [row._id.toString(), row]));
 }
 
+function mergeMatchesById(primary, extra) {
+  const byId = new Map(primary.map((m) => [m._id.toString(), m]));
+  for (const m of extra) {
+    const key = m._id.toString();
+    if (!byId.has(key)) {
+      byId.set(key, m);
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+}
+
 async function listChatRooms(req, res, next) {
   try {
     const userId = req.user.userId;
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
-    const ownedItems = await Item.find({ ownerId: userObjectId, isDeleted: { $ne: true } })
-      .select('_id')
-      .lean();
-    const ownedItemIds = ownedItems.map((item) => item._id);
+    const [ownedItems, ownerMatches] = await Promise.all([
+      Item.find({ ownerId: userObjectId, isDeleted: { $ne: true } })
+        .select('_id')
+        .lean(),
+      Match.find({
+        $or: [
+          { sourceItemOwnerId: userObjectId },
+          { matchedItemOwnerId: userObjectId },
+        ],
+      })
+        .sort({ updatedAt: -1 })
+        .lean(),
+    ]);
 
-    const matchFilter = {
-      $or: [
-        { sourceItemOwnerId: userObjectId },
-        { matchedItemOwnerId: userObjectId },
-      ],
-    };
+    const ownedItemIds = ownedItems.map((item) => item._id);
+    let matchDocs = ownerMatches;
 
     if (ownedItemIds.length > 0) {
-      matchFilter.$or.push(
-        { sourceItemId: { $in: ownedItemIds } },
-        { matchedItemId: { $in: ownedItemIds } },
-      );
+      const itemMatches = await Match.find({
+        $or: [
+          { sourceItemId: { $in: ownedItemIds } },
+          { matchedItemId: { $in: ownedItemIds } },
+        ],
+      })
+        .sort({ updatedAt: -1 })
+        .lean();
+      matchDocs = mergeMatchesById(matchDocs, itemMatches);
     }
-
-    const matchDocs = await Match.find(matchFilter).sort({ updatedAt: -1 }).lean();
 
     if (!matchDocs.length) {
       return res.status(200).json({ rooms: [] });
@@ -66,15 +87,22 @@ async function listChatRooms(req, res, next) {
       itemIds.add(m.matchedItemId.toString());
     }
 
-    const items = await Item.find({ _id: { $in: [...itemIds] } })
-      .select('title ownerId')
-      .lean();
-    const itemById = new Map(items.map((item) => [item._id.toString(), item]));
-
     const ownerIds = new Set();
     for (const m of matchDocs) {
       if (m.sourceItemOwnerId) ownerIds.add(m.sourceItemOwnerId.toString());
       if (m.matchedItemOwnerId) ownerIds.add(m.matchedItemOwnerId.toString());
+    }
+
+    const [items, lastByRoom] = await Promise.all([
+      Item.find({ _id: { $in: [...itemIds] } })
+        .select('title ownerId')
+        .lean(),
+      getLastMessagesByRoom(matchIds),
+    ]);
+
+    const itemById = new Map(items.map((item) => [item._id.toString(), item]));
+
+    for (const m of matchDocs) {
       const src = itemById.get(m.sourceItemId.toString());
       const matched = itemById.get(m.matchedItemId.toString());
       if (src?.ownerId) ownerIds.add(src.ownerId.toString());
@@ -85,8 +113,6 @@ async function listChatRooms(req, res, next) {
       .select('name')
       .lean();
     const userById = new Map(users.map((u) => [u._id.toString(), u]));
-
-    const lastByRoom = await getLastMessagesByRoom(matchIds);
 
     const rooms = matchDocs
       .map((m) => {
@@ -153,34 +179,51 @@ async function getChatMessages(req, res, next) {
     }
 
     const { match, sourceOwner, matchedOwner } = access;
+    const participantIds = [
+      new mongoose.Types.ObjectId(sourceOwner),
+      new mongoose.Types.ObjectId(matchedOwner),
+    ];
 
-    const messagesDesc = await Message.find({ chatRoomId: match._id })
-      .sort({ createdAt: -1 })
-      .limit(MESSAGE_LIMIT)
-      .populate('senderId', 'name')
-      .lean();
+    const [messagesDesc, participants] = await Promise.all([
+      Message.find({ chatRoomId: match._id })
+        .sort({ createdAt: -1 })
+        .limit(MESSAGE_LIMIT)
+        .select('content readBy createdAt senderId')
+        .lean(),
+      User.find({ _id: { $in: participantIds } })
+        .select('name avatarFileId updatedAt')
+        .lean(),
+    ]);
 
-    const messages = messagesDesc.reverse();
+    const senderIds = [
+      ...new Set(messagesDesc.map((msg) => msg.senderId?.toString()).filter(Boolean)),
+    ];
+    const senders =
+      senderIds.length > 0
+        ? await User.find({ _id: { $in: senderIds } })
+            .select('name')
+            .lean()
+        : [];
+    const senderById = new Map(senders.map((u) => [u._id.toString(), u]));
 
-    const formatted = messages.map((msg) => ({
-      _id: msg._id,
-      chatRoomId: msg.chatRoomId,
-      content: msg.content,
-      readBy: msg.readBy || [],
-      createdAt: msg.createdAt,
-      sender: msg.senderId
-        ? { _id: msg.senderId._id, name: msg.senderId.name }
-        : { _id: msg.senderId, name: 'User' },
-    }));
-
-    const participantIds = [sourceOwner, matchedOwner];
-    const participants = await User.find({ _id: { $in: participantIds } })
-      .select('name avatarFileId updatedAt')
-      .lean();
+    const messages = messagesDesc.reverse().map((msg) => {
+      const senderKey = msg.senderId?.toString();
+      const sender = senderById.get(senderKey);
+      return {
+        _id: msg._id,
+        chatRoomId: msg.chatRoomId,
+        content: msg.content,
+        readBy: msg.readBy || [],
+        createdAt: msg.createdAt,
+        sender: sender
+          ? { _id: sender._id, name: sender.name }
+          : { _id: msg.senderId, name: 'User' },
+      };
+    });
 
     return res.status(200).json({
       matchId: match._id,
-      messages: formatted,
+      messages,
       participants: participants.map(formatUserAvatarFields),
     });
   } catch (err) {

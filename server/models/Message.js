@@ -30,6 +30,7 @@ const messageSchema = new mongoose.Schema(
 );
 
 messageSchema.index({ chatRoomId: 1, createdAt: 1 });
+messageSchema.index({ chatRoomId: 1, createdAt: -1 });
 
 const Message = mongoose.model('Message', messageSchema);
 

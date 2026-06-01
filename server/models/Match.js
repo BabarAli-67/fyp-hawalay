@@ -40,6 +40,9 @@ const matchSchema = new mongoose.Schema(
 
 matchSchema.index({ sourceItemId: 1, matchedItemId: 1 }, { unique: true });
 matchSchema.index({ sourceItemOwnerId: 1, matchedItemOwnerId: 1 });
+matchSchema.index({ sourceItemOwnerId: 1, updatedAt: -1 });
+matchSchema.index({ matchedItemOwnerId: 1, updatedAt: -1 });
+matchSchema.index({ updatedAt: -1 });
 
 const Match = mongoose.model('Match', matchSchema);
 
