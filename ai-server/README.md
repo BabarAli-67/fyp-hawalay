@@ -7,7 +7,7 @@ sdk: docker
 app_port: 7860
 pinned: false
 suggested_hardware: cpu-upgrade
-short_description: FastAPI OCR (YOLO + EasyOCR), Gemini caption/embeddings, and MongoDB matching for Hawalay.
+short_description: Hawalay AI backend — OCR, Gemini, matching
 ---
 
 # Hawalay AI Server
