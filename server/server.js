@@ -12,12 +12,13 @@ const REQUIRED_ENV = [
   'INTERNAL_SECRET',
   'FASTAPI_URL',
   'GOOGLE_CLIENT_ID',
-  'VAPID_PUBLIC_KEY',
-  'VAPID_PRIVATE_KEY',
-  'VAPID_EMAIL',
 ];
 
 validateEnv(REQUIRED_ENV);
+
+require('./services/pushService');
+const { initializeObjectModelConfig } = require('./utils/categoryMapping');
+initializeObjectModelConfig();
 
 const portNum = Number(process.env.PORT, 10);
 if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {

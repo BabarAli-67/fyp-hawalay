@@ -97,6 +97,12 @@ function normalizeObjectDetection(block) {
   };
 }
 
+function normalizeSuggestedCategory(raw) {
+  if (raw == null || raw === '') return null;
+  const text = String(raw).trim();
+  return text || null;
+}
+
 /**
  * @param {object} data Raw analyze-image API response
  */
@@ -143,6 +149,9 @@ export function normalizeAnalyzeResponse(data) {
     processingTimeMs: Number(data.processing_time_ms ?? data.processingTimeMs ?? 0),
     visionStatus: (data.vision_status || data.visionStatus || 'empty').trim(),
     visionMessage: (data.vision_message || data.visionMessage || '').trim(),
+    suggestedCategory: normalizeSuggestedCategory(
+      data.suggestedCategory ?? data.suggested_category,
+    ),
     models: data.models || {},
     raw: data,
   };

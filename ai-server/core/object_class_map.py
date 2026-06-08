@@ -14,7 +14,7 @@ def load_json_file(path: Path | None) -> dict[str, Any] | list[Any] | None:
     if path is None or not path.is_file():
         return None
     try:
-        with path.open(encoding="utf-8") as handle:
+        with path.open(encoding="utf-8-sig") as handle:
             return json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Could not load JSON from %s: %s", path, exc)
@@ -24,28 +24,45 @@ def load_json_file(path: Path | None) -> dict[str, Any] | list[Any] | None:
 def load_class_names(path: Path | None) -> dict[int, str]:
     """
     Load ``{ "0": "laptop", ... }`` or ``["laptop", ...]`` into id → name map.
-    Returns empty dict when file is missing (weights not deployed yet).
+    Returns empty dict when file is missing or invalid.
     """
     raw = load_json_file(path)
-    if raw is None:
+    names = normalize_class_name_list(raw)
+    if not names:
         return {}
     if isinstance(raw, list):
-        return {idx: str(name) for idx, name in enumerate(raw)}
+        return {idx: name for idx, name in enumerate(names)}
     if isinstance(raw, dict):
         out: dict[int, str] = {}
         for key, value in raw.items():
             try:
-                out[int(key)] = str(value)
+                out[int(key)] = str(value).strip()
             except (TypeError, ValueError):
                 continue
         return out
     return {}
 
 
+def normalize_class_name_list(raw: Any) -> list[str]:
+    """Ordered class labels from JSON list or id→name dict."""
+    if isinstance(raw, list):
+        return [str(name).strip() for name in raw if str(name).strip()]
+    if isinstance(raw, dict):
+        ordered: list[tuple[int, str]] = []
+        for key, value in raw.items():
+            try:
+                ordered.append((int(key), str(value).strip()))
+            except (TypeError, ValueError):
+                continue
+        ordered.sort(key=lambda pair: pair[0])
+        return [name for _, name in ordered if name]
+    return []
+
+
 def load_category_mapping(path: Path | None) -> dict[str, str]:
     """
     Load detector class name → report category label (e.g. laptop → Electronics).
-    Empty until ``object_category_map.json`` is populated for the trained model.
+    Reads ``category_map.json`` — single source of truth for mappings.
     """
     raw = load_json_file(path)
     if not isinstance(raw, dict):

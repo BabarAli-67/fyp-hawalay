@@ -23,6 +23,7 @@ from utils.gemini_debug import log_gemini_env_status, mask_api_key
 from core.model_ids import CARD_OCR_V1, GEMINI_CAPTION, GEMINI_EMBED, GEMINI_FEATURES, OBJECT_V1
 from core.model_registry import registry
 from core.object_class_map import load_class_names
+from core.object_model_validation import validate_object_model_artifacts
 from core.yolo_detector import YoloDetector
 from providers.gemini_vision_provider import (
     GeminiCaptionProvider,
@@ -102,6 +103,18 @@ async def lifespan(app: FastAPI):
         use_gpu=settings.yolo_use_gpu,
     )
 
+    object_class_names_path = settings.expected_object_class_names_path()
+    category_map_path = settings.expected_object_category_map_path()
+    object_weights_path = settings.expected_object_weights_path()
+
+    object_validation = validate_object_model_artifacts(
+        weights_path=object_weights_path,
+        class_names_path=object_class_names_path,
+        category_map_path=category_map_path,
+    )
+    object_validation.log()
+    app.state.object_model_validation = object_validation
+
     object_class_names = load_class_names(settings.resolved_object_class_names())
     object_weights = settings.resolved_object_weights()
     app.state.object_detector = YoloDetector(
@@ -110,10 +123,15 @@ async def lifespan(app: FastAPI):
         use_gpu=settings.object_use_gpu,
         class_names=object_class_names,
     )
-    if app.state.object_detector.is_ready:
+    if app.state.object_detector.is_ready and object_validation.ready:
         logger.info(
             "Object detector ready (%d classes)",
             len(object_class_names),
+        )
+    elif app.state.object_detector.is_ready:
+        logger.warning(
+            "Object detector weights loaded but artifact validation failed — "
+            "check class_names.json / category_map.json logs above",
         )
     else:
         logger.info(

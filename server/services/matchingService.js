@@ -7,6 +7,8 @@ const Match = require('../models/Match');
 const { postJson } = require('./aiClient');
 const Notification = require('../models/Notification');
 const Item = require('../models/Item');
+const User = require('../models/User');
+const { sendPushToUser } = require('./pushService');
 const { emitToUser } = require('../socket');
 
 const MATCH_LIMIT = 5;
@@ -44,6 +46,8 @@ async function persistMatchAndNotify(sourceItem, matchPayload) {
   const notifications = [];
 
   const sourceMessage = `Possible match found for "${sourceItem.title}" — "${matchedItem.title}" (${Math.round(score * 100)}% similar)`;
+  let reverseMessage = null;
+
   notifications.push(
     Notification.create({
       userId: sourceItem.ownerId,
@@ -57,7 +61,7 @@ async function persistMatchAndNotify(sourceItem, matchPayload) {
   );
 
   if (matchedOwnerId && matchedOwnerId !== sourceOwnerId) {
-    const reverseMessage = `Someone reported a ${sourceItem.reportType === 'lost' ? 'found' : 'lost'} item that may match yours — "${sourceItem.title}" (${Math.round(score * 100)}% similar)`;
+    reverseMessage = `Someone reported a ${sourceItem.reportType === 'lost' ? 'found' : 'lost'} item that may match yours — "${sourceItem.title}" (${Math.round(score * 100)}% similar)`;
     notifications.push(
       Notification.create({
         userId: matchedItem.ownerId,
@@ -72,6 +76,23 @@ async function persistMatchAndNotify(sourceItem, matchPayload) {
   }
 
   await Promise.all(notifications);
+
+  const pushPayload = {
+    title: 'New match found',
+    body: sourceMessage,
+    tag: matchDoc._id.toString(),
+  };
+
+  const sourceUser = await User.findById(sourceItem.ownerId).select('pushSubscription').lean();
+  await sendPushToUser(sourceUser, pushPayload);
+
+  if (matchedOwnerId && matchedOwnerId !== sourceOwnerId && reverseMessage) {
+    const matchedUser = await User.findById(matchedItem.ownerId).select('pushSubscription').lean();
+    await sendPushToUser(matchedUser, {
+      ...pushPayload,
+      body: reverseMessage,
+    });
+  }
 
   emitToUser(sourceOwnerId, 'match:found', {
     matchId: matchDoc._id.toString(),

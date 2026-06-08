@@ -1,1 +1,23 @@
-{}
+﻿{
+    "bag":  "Accessories",
+    "headphones":  "Electronics",
+    "keys":  "Accessories",
+    "passport":  "Documents",
+    "umbrella":  "Accessories",
+    "watch":  "Accessories",
+    "bottle":  "Other",
+    "hat":  "Clothing",
+    "jacket":  "Clothing",
+    "book":  "Other",
+    "id_card":  "Documents",
+    "backpack":  "Accessories",
+    "atm_card":  "Documents",
+    "document":  "Documents",
+    "tablet":  "Electronics",
+    "glasses":  "Accessories",
+    "camera":  "Electronics",
+    "laptop":  "Electronics",
+    "charger":  "Electronics",
+    "wallet":  "Accessories",
+    "phone":  "Electronics"
+}

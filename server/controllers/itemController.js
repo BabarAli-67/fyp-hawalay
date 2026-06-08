@@ -7,7 +7,7 @@ const {
   DEFAULT_TIMEOUT_MS,
   OCR_TIMEOUT_MS,
 } = require('../services/aiClient');
-const { getImageStream, uploadToGridFS } = require('../utils/imageStorage');
+const { deleteFromGridFS, getImageStream, uploadToGridFS } = require('../utils/imageStorage');
 const { suggestCategoryFromDetections } = require('../utils/categoryMapping');
 const { resolveItemEmbedding } = require('../utils/itemEmbedding');
 
@@ -334,7 +334,8 @@ async function analyzeImage(req, res, next) {
       `[analyzeImage] vision_status=${visionStatus} caption_words=${captionWords} ` +
         `ocr_success=${Boolean(data?.ocr?.success)} message=${JSON.stringify(data?.vision_message || '')}`,
     );
-    return res.status(200).json(data);
+    const suggestedCategory = suggestCategoryFromDetections(mapDetectedObjects(data));
+    return res.status(200).json({ ...data, suggestedCategory });
   } catch (err) {
     const mapped = mapAiServiceError(err);
     if (mapped.status === 503) {
@@ -439,7 +440,7 @@ async function getItems(req, res, next) {
     const limit = req.query.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    const filter = { isDeleted: false };
+    const filter = { isDeleted: { $ne: true } };
     if (category) filter.category = category;
     if (reportType) filter.reportType = reportType;
     if (ownerId) filter.ownerId = ownerId;
@@ -477,9 +478,12 @@ async function getItems(req, res, next) {
 
 async function getItemById(req, res, next) {
   try {
-    const item = await Item.findById(req.params.id);
+    const item = await Item.findOne({
+      _id: req.params.id,
+      isDeleted: { $ne: true },
+    });
 
-    if (!item || item.isDeleted) {
+    if (!item) {
       return res.status(404).json({ error: 'Item not found' });
     }
 
@@ -530,6 +534,30 @@ async function streamImage(req, res, next) {
 
 const ITEM_STATUSES = ['active', 'claimed', 'expired'];
 
+async function deleteItem(req, res, next) {
+  try {
+    const item = await Item.findOne({
+      _id: req.params.id,
+      ownerId: req.user.userId,
+    });
+
+    if (!item || item.isDeleted) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    item.isDeleted = true;
+    await item.save();
+
+    if (item.imageFileId) {
+      await deleteFromGridFS(item.imageFileId);
+    }
+
+    return res.status(200).json({ message: 'Item deleted' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function updateStatus(req, res, next) {
   try {
     const item = await Item.findById(req.params.id);
@@ -574,5 +602,6 @@ module.exports = {
   getItems,
   getItemById,
   streamImage,
+  deleteItem,
   updateStatus,
 };

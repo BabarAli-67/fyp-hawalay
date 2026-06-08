@@ -105,26 +105,31 @@ class Settings(BaseSettings):
         return path if path.is_file() else None
 
     def resolved_object_weights(self) -> Path | None:
-        if not self.object_model_path:
-            return None
-        path = Path(self.object_model_path).expanduser().resolve()
+        path = self.expected_object_weights_path()
         return path if path.is_file() else None
 
-    def resolved_object_class_names(self) -> Path | None:
+    def expected_object_weights_path(self) -> Path:
+        if self.object_model_path:
+            return Path(self.object_model_path).expanduser().resolve()
+        return Path(__file__).resolve().parent / "artifacts" / "object_v1" / "weights" / "best.pt"
+
+    def expected_object_class_names_path(self) -> Path:
         if self.object_class_names_path:
-            path = Path(self.object_class_names_path).expanduser().resolve()
-            if path.is_file():
-                return path
-        default = Path(__file__).resolve().parent / "artifacts" / "object_v1" / "class_names.json"
-        return default if default.is_file() else None
+            return Path(self.object_class_names_path).expanduser().resolve()
+        return Path(__file__).resolve().parent / "artifacts" / "object_v1" / "class_names.json"
+
+    def expected_object_category_map_path(self) -> Path:
+        if self.object_category_map_path:
+            return Path(self.object_category_map_path).expanduser().resolve()
+        return Path(__file__).resolve().parent / "artifacts" / "object_v1" / "category_map.json"
+
+    def resolved_object_class_names(self) -> Path | None:
+        path = self.expected_object_class_names_path()
+        return path if path.is_file() else None
 
     def resolved_object_category_map(self) -> Path | None:
-        if self.object_category_map_path:
-            path = Path(self.object_category_map_path).expanduser().resolve()
-            if path.is_file():
-                return path
-        default = Path(__file__).resolve().parent / "artifacts" / "object_v1" / "category_map.json"
-        return default if default.is_file() else None
+        path = self.expected_object_category_map_path()
+        return path if path.is_file() else None
 
 
 @lru_cache

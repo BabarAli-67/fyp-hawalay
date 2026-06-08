@@ -1,24 +1,15 @@
 """
-Map detector class names to report categories (placeholder until object model ships).
+Map detector class names to report categories via category_map.json.
 
-Populate ``object_category_map.json`` when the 21-class model is trained.
+``category_map.json`` is the single source of truth (see object_class_map loader).
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from core.object_class_map import load_category_mapping
-
-# Report categories in MERN Item schema (must stay in sync with server/models/Item.js)
-REPORT_CATEGORIES: tuple[str, ...] = (
-    "Electronics",
-    "Clothing",
-    "Documents",
-    "Accessories",
-    "Other",
-)
+from core.object_model_validation import REPORT_CATEGORIES
 
 
 def suggest_category_from_detections(

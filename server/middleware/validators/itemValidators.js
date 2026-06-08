@@ -61,9 +61,12 @@ const updateStatusValidation = [
   body('claimedByUserId').optional().isMongoId().withMessage('Invalid claimedByUserId'),
 ];
 
+const deleteItemValidator = [param('id').isMongoId()];
+
 module.exports = {
   createItemValidation,
   getItemsValidation,
   itemIdParamValidation,
   updateStatusValidation,
+  deleteItemValidator,
 };

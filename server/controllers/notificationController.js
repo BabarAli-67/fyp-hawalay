@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Notification = require('../models/Notification');
+const { sendPushToUser } = require('../services/pushService');
 
 function parsePagination(query) {
   const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
@@ -113,4 +114,5 @@ module.exports = {
   listNotifications,
   markNotificationAsRead,
   markAllNotificationsAsRead,
+  sendPushToUser,
 };

@@ -1,5 +1,6 @@
 const express = require('express');
 
+const itemController = require('../controllers/itemController');
 const {
   analyzeImage,
   createItem,
@@ -9,12 +10,13 @@ const {
   processImage,
   streamImage,
   updateStatus,
-} = require('../controllers/itemController');
+} = itemController;
 const { authMiddleware } = require('../middleware');
 const handleValidationErrors = require('../middleware/handleValidationErrors');
 const { uploadItemImage } = require('../middleware/uploadItemImage');
 const {
   createItemValidation,
+  deleteItemValidator,
   getItemsValidation,
   itemIdParamValidation,
   updateStatusValidation,
@@ -29,6 +31,7 @@ router.post('/process-image', uploadItemImage, processImage);
 router.post('/analyze-image', uploadItemImage, analyzeImage);
 router.get('/:id/image', itemIdParamValidation, handleValidationErrors, streamImage);
 router.patch('/:id/status', updateStatusValidation, handleValidationErrors, updateStatus);
+router.delete('/:id', authMiddleware, deleteItemValidator, handleValidationErrors, itemController.deleteItem);
 router.post('/', uploadItemImage, createItemValidation, handleValidationErrors, createItem);
 router.get('/', getItemsValidation, handleValidationErrors, getItems);
 router.get('/:id', itemIdParamValidation, handleValidationErrors, getItemById);

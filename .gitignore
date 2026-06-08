@@ -93,6 +93,8 @@ ai-server.zip
 
 # --- Local audit reports (not for Git) ---
 PRODUCTION_DEPLOYMENT_AUDIT.md
-PRODUCTION_DEPLOYMENT_AUDIT.pdf 
+PRODUCTION_DEPLOYMENT_AUDIT.pdf
+status.md
+status.pdf
 # --- npm workspaces: root lockfile is canonical ---
 client/package-lock.json
