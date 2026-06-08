@@ -20,7 +20,12 @@ from services.clip_service import CLIP_EMBEDDING_DIM, fuse_vectors
 from utils.image_utils import decode_image, image_to_bytes, resize_image
 from schemas.extraction import ExtractedAttribute
 from utils.analyze_context import build_analyze_context, build_extracted_attributes
-from utils.report_caption import build_caption_context_from_analyze, build_ocr_fallback_caption
+from utils.report_caption import (
+    build_caption_context_from_analyze,
+    build_ocr_fallback_caption,
+    build_structured_fallback_caption,
+    is_weak_report_caption,
+)
 from utils.report_features import format_feature_bullets, resolve_feature_points
 from utils.gemini_debug import mask_api_key
 from utils.text_builder import build_enriched_text
@@ -244,6 +249,8 @@ class AnalyzeOrchestrator:
                         meta={
                             "caption_context": caption_context,
                             "ocr_payload": ocr_payload,
+                            "detected_object_names": detected_object_names,
+                            "category": category,
                         },
                     )
                 )
@@ -290,6 +297,25 @@ class AnalyzeOrchestrator:
                 features_raw = (feat_result.get("features_text") or "").strip()
 
             ocr_ok = bool(ocr_payload and ocr_payload.get("success"))
+            if caption.strip() and is_weak_report_caption(caption, ocr_payload):
+                structured_fallback = build_structured_fallback_caption(
+                    ocr_payload,
+                    detected_object_names=detected_object_names,
+                    category=category,
+                )
+                if structured_fallback:
+                    logger.warning(
+                        "[vision] replacing weak Gemini caption with structured fallback words=%d",
+                        len(structured_fallback.split()),
+                    )
+                    caption = structured_fallback
+                    if vision_status == "ok":
+                        vision_status = "ocr_fallback"
+                        vision_message = (
+                            "AI description was incomplete — replaced with a structured description "
+                            "from detected image attributes."
+                        )
+
             if not caption.strip() and ocr_ok:
                 fallback = build_ocr_fallback_caption(ocr_payload)
                 if fallback:

@@ -45,8 +45,20 @@ class Settings(BaseSettings):
         alias="GEMINI_GENERATE_MAX_ATTEMPTS",
     )
     gemini_caption_quality_retry: bool = Field(
-        default=False,
+        default=True,
         alias="GEMINI_CAPTION_QUALITY_RETRY",
+    )
+    gemini_caption_max_passes: int = Field(
+        default=3,
+        ge=1,
+        le=3,
+        alias="GEMINI_CAPTION_MAX_PASSES",
+    )
+    gemini_caption_max_output_tokens: int = Field(
+        default=512,
+        ge=128,
+        le=2048,
+        alias="GEMINI_CAPTION_MAX_OUTPUT_TOKENS",
     )
     gemini_features_enabled: bool = Field(
         default=False,

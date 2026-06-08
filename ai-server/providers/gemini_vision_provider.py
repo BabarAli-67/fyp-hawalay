@@ -37,11 +37,16 @@ class GeminiCaptionProvider:
         )
         try:
             meta = input.meta or {}
+            detected_object_names = meta.get("detected_object_names")
+            if not isinstance(detected_object_names, list):
+                detected_object_names = None
             result = await self._service.caption(
                 input.image_bytes,
                 fallback_text=meta.get("fallback_text", ""),
                 context=str(meta.get("caption_context") or ""),
                 ocr_payload=meta.get("ocr_payload") if isinstance(meta.get("ocr_payload"), dict) else None,
+                detected_object_names=detected_object_names,
+                category=str(meta.get("category") or ""),
             )
             elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
             caption = (result.get("caption") or "").strip()

@@ -82,9 +82,12 @@ async def lifespan(app: FastAPI):
             mask_api_key(settings.gemini_api_key),
         )
         logger.info(
-            "Gemini usage: max_attempts=%s caption_quality_retry=%s features=%s embed_image=%s",
+            "Gemini usage: max_attempts=%s caption_quality_retry=%s caption_max_passes=%s "
+            "caption_max_output_tokens=%s features=%s embed_image=%s",
             settings.gemini_generate_max_attempts,
             settings.gemini_caption_quality_retry,
+            settings.gemini_caption_max_passes,
+            settings.gemini_caption_max_output_tokens,
             settings.gemini_features_enabled,
             settings.gemini_embed_image,
         )

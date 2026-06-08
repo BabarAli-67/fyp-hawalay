@@ -18,7 +18,9 @@ from config import get_settings
 from utils.gemini_debug import mask_api_key
 from utils.gemini_retry import generate_content_with_retry, is_rate_limit_error
 from utils.report_caption import (
+    build_structured_fallback_caption,
     compose_caption_prompt,
+    is_valid_report_caption,
     is_weak_report_caption,
     normalize_caption_output,
 )
@@ -27,6 +29,12 @@ from utils.report_features import compose_features_prompt
 logger = logging.getLogger(__name__)
 
 DEFAULT_CAPTION_MODEL = "gemini-2.0-flash"
+
+_CAPTION_GENERATION_PASSES: tuple[dict[str, Any], ...] = (
+    {"retry": False, "detail_retry": False, "operation": "caption_primary"},
+    {"retry": True, "detail_retry": False, "operation": "caption_quality_retry"},
+    {"retry": False, "detail_retry": True, "operation": "caption_detail_retry"},
+)
 
 
 def _generate_caption_attempt(
@@ -67,6 +75,8 @@ def generate_caption(
     client: Client | None = None,
     context: str = "",
     ocr_payload: dict[str, Any] | None = None,
+    detected_object_names: list[str] | None = None,
+    category: str = "",
 ) -> tuple[str, bool]:
     """
     Generate a lost-and-found report description with Gemini Vision.
@@ -103,57 +113,72 @@ def generate_caption(
     try:
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
         logger.info("[caption] PIL decode ok size=%sx%s", image.width, image.height)
+        max_output_tokens = settings.gemini_caption_max_output_tokens
         gen_config = types.GenerateContentConfig(
             temperature=0.58,
-            max_output_tokens=380,
+            max_output_tokens=max_output_tokens,
         )
-        caption = _generate_caption_attempt(
-            client,
-            model,
-            image,
-            context,
-            ocr_payload,
-            gen_config,
-            detail_retry=False,
-            operation="caption_primary",
+        configured_passes = (
+            settings.gemini_caption_max_passes
+            if settings.gemini_caption_quality_retry
+            else 1
         )
-        logger.info(
-            "[caption] primary result words=%d chars=%d preview=%r",
-            len(caption.split()),
-            len(caption),
-            caption[:120],
-        )
+        max_passes = min(configured_passes, len(_CAPTION_GENERATION_PASSES))
+        caption = ""
+        for pass_index, pass_cfg in enumerate(_CAPTION_GENERATION_PASSES[:max_passes], start=1):
+            if pass_index > 1 and not is_weak_report_caption(caption, ocr_payload):
+                break
 
-        if settings.gemini_caption_quality_retry and is_weak_report_caption(caption, ocr_payload):
-            logger.info(
-                "[caption] weak caption (%d words) — quality retry enabled",
-                len(caption.split()),
-            )
-            caption = _generate_caption_attempt(
+            attempt_caption = _generate_caption_attempt(
                 client,
                 model,
                 image,
                 context,
                 ocr_payload,
                 gen_config,
-                detail_retry=False,
-                retry=True,
-                operation="caption_quality_retry",
+                retry=bool(pass_cfg["retry"]),
+                detail_retry=bool(pass_cfg["detail_retry"]),
+                operation=str(pass_cfg["operation"]),
             )
+            if attempt_caption:
+                caption = attempt_caption
+
             logger.info(
-                "[caption] quality retry result words=%d chars=%d",
+                "[caption] pass %d/%d op=%s words=%d chars=%d valid=%s preview=%r",
+                pass_index,
+                max_passes,
+                pass_cfg["operation"],
                 len(caption.split()),
                 len(caption),
-            )
-        elif is_weak_report_caption(caption, ocr_payload):
-            logger.info(
-                "[caption] weak caption (%d words) but GEMINI_CAPTION_QUALITY_RETRY=false — "
-                "keeping primary result (no second API call)",
-                len(caption.split()),
+                is_valid_report_caption(caption, ocr_payload),
+                caption[:120],
             )
 
-        if caption.strip():
+            if is_valid_report_caption(caption, ocr_payload):
+                break
+
+        if is_weak_report_caption(caption, ocr_payload):
+            fallback = build_structured_fallback_caption(
+                ocr_payload,
+                detected_object_names=detected_object_names,
+                category=category,
+            )
+            if fallback and is_valid_report_caption(fallback, ocr_payload):
+                logger.warning(
+                    "[caption] Gemini output weak after %d pass(es) — using structured fallback words=%d",
+                    max_passes,
+                    len(fallback.split()),
+                )
+                caption = fallback
+
+        if caption.strip() and is_valid_report_caption(caption, ocr_payload):
             logger.info("[caption] generate_caption done — SUCCESS")
+        elif caption.strip():
+            logger.warning(
+                "[caption] generate_caption done — returning best-effort caption after validation failed "
+                "words=%d",
+                len(caption.split()),
+            )
         else:
             logger.warning(
                 "[caption] generate_caption done — empty caption after Gemini response "
@@ -272,6 +297,8 @@ class BlipService:
         fallback_text: str = "",
         context: str = "",
         ocr_payload: dict[str, Any] | None = None,
+        detected_object_names: list[str] | None = None,
+        category: str = "",
     ) -> dict[str, Any]:
         caption, rate_limited = await asyncio.to_thread(
             generate_caption,
@@ -282,6 +309,8 @@ class BlipService:
             client=self._client,
             context=context,
             ocr_payload=ocr_payload,
+            detected_object_names=detected_object_names,
+            category=category,
         )
         logger.info(
             "[caption] BlipService.caption done status=%s rate_limited=%s words=%d",

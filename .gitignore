@@ -81,7 +81,7 @@ ai-server/artifacts/**/*.pth
 
 # Friend's YOLO/OCR training repo (~600 MB+) — local dev only, not for GitHub/production
 OCR_Model/
-
+ai-server.zip
 # --- Temp & backup ---
 *.bak
 *.tmp
