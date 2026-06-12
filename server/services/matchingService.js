@@ -5,6 +5,7 @@
  */
 const Match = require('../models/Match');
 const { postJson } = require('./aiClient');
+const { isValidEmbeddingVector } = require('../utils/itemEmbedding');
 const Notification = require('../models/Notification');
 const Item = require('../models/Item');
 const User = require('../models/User');
@@ -117,13 +118,13 @@ async function persistMatchAndNotify(sourceItem, matchPayload) {
 
 function itemHasEmbedding(item) {
   const vec = item.embeddingVector;
-  if (!Array.isArray(vec) || vec.length === 0) {
-    return false;
-  }
-  if (item.aiMetadata?.embeddingAvailable === false) {
+  if (!isValidEmbeddingVector(vec)) {
     return false;
   }
   if (item.embeddingAvailable === false) {
+    return false;
+  }
+  if (item.aiMetadata?.embeddingAvailable === false) {
     return false;
   }
   return true;

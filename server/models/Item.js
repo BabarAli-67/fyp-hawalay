@@ -32,6 +32,32 @@ const itemSchema = new mongoose.Schema(
       enum: ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'],
       required: true,
     },
+    /** User's original dropdown selection — never overwritten after submit. */
+    userCategory: {
+      type: String,
+      enum: ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'],
+    },
+    /** AI-detected report category from object_v1 + category_map. */
+    aiCategory: {
+      type: String,
+      enum: ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'],
+      default: null,
+    },
+    /** Category used for matching, embeddings, and browse (AI when confident). */
+    effectiveCategory: {
+      type: String,
+      enum: ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'],
+    },
+    categoryMismatch: {
+      type: Boolean,
+      default: false,
+    },
+    categoryDetectionConfidence: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: null,
+    },
     location: {
       type: {
         type: String,
@@ -129,6 +155,8 @@ const itemSchema = new mongoose.Schema(
       },
       detectionCount: { type: Number, default: 0 },
       suggestedCategory: { type: String },
+      suggestedCategorySource: { type: String },
+      ocrDocumentType: { type: String },
       ocrFields: { type: mongoose.Schema.Types.Mixed },
       processedAt: { type: Date },
       processingTimeMs: { type: Number },
@@ -184,6 +212,9 @@ itemSchema.index({ location: '2dsphere' });
 itemSchema.index({ secondaryLocation: '2dsphere' }, { sparse: true });
 itemSchema.index({ brand: 1 });
 itemSchema.index({ category: 1 });
+itemSchema.index({ effectiveCategory: 1 }, { sparse: true });
+itemSchema.index({ userCategory: 1 }, { sparse: true });
+itemSchema.index({ categoryMismatch: 1 }, { sparse: true });
 itemSchema.index({ reportType: 1, status: 1 });
 itemSchema.index({ ownerId: 1 });
 itemSchema.index({ date: -1 });

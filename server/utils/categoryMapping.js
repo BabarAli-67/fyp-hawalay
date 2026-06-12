@@ -4,7 +4,7 @@
  * Single source of truth (shared with ai-server):
  *   - class_names.json
  *   - category_map.json
- *   - weights/best.pt (validated for deployment readiness)
+ *   - weights/hawaly_model_final.keras (validated for deployment readiness)
  *
  * Replace artifact files and restart — no code changes required.
  */
@@ -23,7 +23,7 @@ const DEFAULT_WEIGHTS = path.join(
   'artifacts',
   'object_v1',
   'weights',
-  'best.pt',
+  'hawaly_model_final.keras',
 );
 const DEFAULT_CLASS_NAMES = path.join(
   REPO_ROOT,
@@ -114,11 +114,11 @@ function initializeObjectModelConfig() {
     if (classNamesExists || categoryMapExists) {
       console.warn(
         `[object_v1] weights missing at ${weightsPath} but JSON artifact(s) present — ` +
-          'object detector will stay unavailable until best.pt is added',
+          'object detector will stay unavailable until hawaly_model_final.keras is added',
       );
     } else {
       console.info(
-        '[object_v1] not deployed — add best.pt, class_names.json, and category_map.json then restart',
+        '[object_v1] not deployed — add hawaly_model_final.keras, class_names.json, and category_map.json then restart',
       );
     }
     return { ready: false, classCount: 0, weightsPath, classNamesPath, categoryMapPath };
@@ -221,6 +221,162 @@ function isObjectModelReady() {
   return objectModelReady;
 }
 
+/** OCR document types that map to report category Documents. */
+const OCR_DOCUMENT_TYPES = new Set([
+  'credit_card',
+  'cnic',
+  'id_card',
+  'national_id',
+  'passport',
+  'driving_license',
+]);
+
+const OCR_CARD_FIELD_KEYS = ['card_number', 'cardholder_name', 'card_brand', 'expiry_date'];
+
+const OCR_DOCUMENT_LABELS = {
+  credit_card: 'bank or payment card',
+  cnic: 'national ID card (CNIC)',
+  id_card: 'ID card',
+  national_id: 'national ID card',
+  passport: 'passport',
+  driving_license: 'driving license',
+};
+
+const OCR_CATEGORY_CONFIDENCE_THRESHOLD = Number(
+  process.env.OCR_CATEGORY_CONFIDENCE_THRESHOLD || 0.35,
+);
+
+/**
+ * @param {object | null | undefined} ocr
+ */
+function extractOcrBlock(ocrOrAnalyze) {
+  if (!ocrOrAnalyze || typeof ocrOrAnalyze !== 'object') return null;
+  if (ocrOrAnalyze.ocr && typeof ocrOrAnalyze.ocr === 'object') {
+    return ocrOrAnalyze.ocr;
+  }
+  return ocrOrAnalyze;
+}
+
+/**
+ * @param {object | null | undefined} ocr
+ */
+function ocrHasCardFields(ocr) {
+  if (!ocr || typeof ocr !== 'object') return false;
+  const fields = ocr.fields && typeof ocr.fields === 'object' ? ocr.fields : {};
+  return OCR_CARD_FIELD_KEYS.some((key) => {
+    const fromFields = fields[key]?.value ?? fields[key];
+    const flat = ocr[key];
+    const text = fromFields != null ? fromFields : flat;
+    return text != null && String(text).trim() !== '';
+  });
+}
+
+/**
+ * @param {object | null | undefined} ocr
+ * @returns {string | null}
+ */
+function resolveOcrDocumentType(ocr) {
+  if (!ocr || typeof ocr !== 'object') return null;
+  const docType = String(ocr.document_type || ocr.documentType || 'unknown')
+    .trim()
+    .toLowerCase();
+  if (OCR_DOCUMENT_TYPES.has(docType)) return docType;
+  if (docType === 'unknown' && ocrHasCardFields(ocr)) return 'credit_card';
+  return null;
+}
+
+/**
+ * Confidence for effectiveCategory when category comes from OCR.
+ *
+ * @param {object | null | undefined} ocr
+ */
+function getOcrCategoryConfidence(ocr) {
+  if (!ocr || typeof ocr !== 'object') return 0;
+  const base = Number(ocr.overall_confidence ?? ocr.overallConfidence ?? 0);
+  if (ocrHasCardFields(ocr)) {
+    return Math.max(Number.isFinite(base) ? base : 0, 0.75);
+  }
+  return Number.isFinite(base) ? base : 0;
+}
+
+/**
+ * Suggest report category from card OCR (ID cards, CNIC, payment cards).
+ *
+ * @param {object | null | undefined} ocrOrAnalyze
+ * @returns {string | null}
+ */
+function suggestCategoryFromOcr(ocrOrAnalyze) {
+  const ocr = extractOcrBlock(ocrOrAnalyze);
+  if (!ocr || ocr.success !== true) return null;
+
+  const documentType = resolveOcrDocumentType(ocr);
+  if (!documentType) return null;
+
+  const confidence = getOcrCategoryConfidence(ocr);
+  if (confidence < OCR_CATEGORY_CONFIDENCE_THRESHOLD && !ocrHasCardFields(ocr)) {
+    return null;
+  }
+
+  return 'Documents';
+}
+
+/**
+ * Metadata for UI and item create (source, hint label, confidence).
+ *
+ * @param {object | null | undefined} ocrOrAnalyze
+ */
+function getOcrCategorySuggestion(ocrOrAnalyze) {
+  const ocr = extractOcrBlock(ocrOrAnalyze);
+  const category = suggestCategoryFromOcr(ocr);
+  if (!category) return null;
+
+  const documentType = resolveOcrDocumentType(ocr);
+  return {
+    category,
+    confidence: getOcrCategoryConfidence(ocr),
+    source: 'card_ocr_v1',
+    documentType,
+    label: OCR_DOCUMENT_LABELS[documentType] || 'identity document',
+  };
+}
+
+/**
+ * Merge OCR (Documents for cards/IDs) and object_v1 suggestions.
+ * OCR takes priority when both apply — card uploads should not use object class.
+ *
+ * @param {{
+ *   detectedObjects?: Array<{ className?: string, confidence?: number }>,
+ *   ocr?: object | null,
+ *   analyzePayload?: object | null,
+ * }} params
+ */
+function resolveSuggestedCategory({ detectedObjects = [], ocr = null, analyzePayload = null }) {
+  const ocrBlock = extractOcrBlock(ocr || analyzePayload);
+  const ocrSuggestion = getOcrCategorySuggestion(ocrBlock);
+  if (ocrSuggestion) {
+    return ocrSuggestion;
+  }
+
+  const objectCategory = suggestCategoryFromDetections(detectedObjects);
+  if (!objectCategory) return null;
+
+  const best = detectedObjects.reduce((top, item) => {
+    const conf = Number(item?.confidence ?? 0);
+    if (!top || conf > top.confidence) {
+      return { className: item?.className || '', confidence: conf };
+    }
+    return top;
+  }, null);
+
+  return {
+    category: objectCategory,
+    confidence: Number(best?.confidence ?? 0),
+    source: 'object_v1',
+    documentType: null,
+    label: best?.className ? best.className.replace(/_/g, ' ') : null,
+  };
+}
+
 /**
  * Suggest a report category from object detections (highest confidence wins).
  * Returns null when artifacts are not ready or there are no detections.
@@ -254,4 +410,9 @@ module.exports = {
   getCategoryMap,
   isObjectModelReady,
   suggestCategoryFromDetections,
+  suggestCategoryFromOcr,
+  getOcrCategorySuggestion,
+  resolveSuggestedCategory,
+  getOcrCategoryConfidence,
+  OCR_DOCUMENT_TYPES,
 };

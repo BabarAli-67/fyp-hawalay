@@ -98,7 +98,7 @@ async function analyzeImage(formData, { timeout = ANALYZE_IMAGE_TIMEOUT_MS } = {
  * @param {FormData} formData
  * @param {{ timeout?: number }} options
  */
-async function embedItemReport(formData, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
+async function embedItemReport(formData, { timeout = 45_000 } = {}) {
   return postMultipart('/ai/embed-item', formData, { timeout });
 }
 

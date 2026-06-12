@@ -9,6 +9,7 @@ const createItemValidation = [
   body('reportType').isIn(REPORT_TYPES).withMessage('reportType must be lost or found'),
   body('title').trim().notEmpty().withMessage('title is required').isLength({ max: 100 }),
   body('category').isIn(CATEGORIES).withMessage('Invalid category'),
+  body('userCategory').optional().isIn(CATEGORIES).withMessage('Invalid userCategory'),
   body('locationName').trim().notEmpty().withMessage('locationName is required'),
   body('date').isISO8601().withMessage('date must be a valid ISO date'),
   body('description').optional().isLength({ max: 1000 }),

@@ -8,7 +8,8 @@ const {
   OCR_TIMEOUT_MS,
 } = require('../services/aiClient');
 const { deleteFromGridFS, getImageStream, uploadToGridFS } = require('../utils/imageStorage');
-const { suggestCategoryFromDetections } = require('../utils/categoryMapping');
+const { resolveSuggestedCategory } = require('../utils/categoryMapping');
+const { resolveCategoryFields } = require('../utils/categoryResolution');
 const { resolveItemEmbedding } = require('../utils/itemEmbedding');
 
 const CATEGORIES = ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'];
@@ -162,13 +163,17 @@ function mapDetectedObjects(aiResponse) {
     .filter(Boolean);
 }
 
-function buildAiMetadata(aiResponse, { embeddingVector } = {}) {
+function buildAiMetadata(aiResponse, { embeddingVector, embeddingModel, embeddingResolved } = {}) {
+  const hasValidVector =
+    embeddingResolved === true ||
+    (Array.isArray(embeddingVector) && embeddingVector.length === 512);
+
   if (!aiResponse || typeof aiResponse !== 'object') {
-    const hasVector = Array.isArray(embeddingVector) && embeddingVector.length > 0;
-    if (!hasVector) return {};
+    if (!hasValidVector) return {};
     return {
       pipelineVersion: 'analyze_v1',
       embeddingAvailable: true,
+      embeddingModel: embeddingModel || 'gemini-embedding-2',
       embeddingDimension: embeddingVector.length,
       processedAt: new Date(),
     };
@@ -185,13 +190,14 @@ function buildAiMetadata(aiResponse, { embeddingVector } = {}) {
   const detectedObjects = mapDetectedObjects(aiResponse);
 
   const embeddingAvailable =
+    embeddingResolved === true ||
     aiResponse.embedding_available === true ||
-    aiResponse.embeddingAvailable === true ||
-    (Array.isArray(embeddingVector) && embeddingVector.length > 0);
+    aiResponse.embeddingAvailable === true;
 
   const metadata = {
     pipelineVersion: models.pipeline_version || models.pipelineVersion || 'analyze_v1',
-    embeddingModel: models.embedding || 'unknown',
+    embeddingModel:
+      embeddingModel || models.embedding || models.embeddingModel || 'gemini-embedding-2',
     embeddingDimension:
       models.embedding_dimension ??
       models.embeddingDimension ??
@@ -210,9 +216,17 @@ function buildAiMetadata(aiResponse, { embeddingVector } = {}) {
     processingTimeMs: aiResponse.processing_time_ms ?? aiResponse.processingTimeMs ?? 0,
   };
 
-  const suggestedCategory = suggestCategoryFromDetections(detectedObjects);
-  if (suggestedCategory) {
-    metadata.suggestedCategory = suggestedCategory;
+  const suggestion = resolveSuggestedCategory({
+    detectedObjects,
+    analyzePayload: aiResponse,
+    ocr: aiResponse?.ocr,
+  });
+  if (suggestion?.category) {
+    metadata.suggestedCategory = suggestion.category;
+    metadata.suggestedCategorySource = suggestion.source;
+    if (suggestion.documentType) {
+      metadata.ocrDocumentType = suggestion.documentType;
+    }
   }
 
   return metadata;
@@ -239,6 +253,10 @@ function validateCreateItemFields(body) {
 
   if (!CATEGORIES.includes(body.category)) {
     return { error: 'Invalid category' };
+  }
+
+  if (body.userCategory != null && body.userCategory !== '' && !CATEGORIES.includes(body.userCategory)) {
+    return { error: 'Invalid userCategory' };
   }
 
   const location = parseLocation(body);
@@ -330,12 +348,24 @@ async function analyzeImage(req, res, next) {
     const data = await callAnalyzeImage(formData);
     const visionStatus = data?.vision_status || data?.visionStatus || 'unknown';
     const captionWords = (data?.caption || '').trim().split(/\s+/).filter(Boolean).length;
+    const detectedObjects = mapDetectedObjects(data);
+    const suggestion = resolveSuggestedCategory({
+      detectedObjects,
+      analyzePayload: data,
+      ocr: data?.ocr,
+    });
     console.info(
       `[analyzeImage] vision_status=${visionStatus} caption_words=${captionWords} ` +
-        `ocr_success=${Boolean(data?.ocr?.success)} message=${JSON.stringify(data?.vision_message || '')}`,
+        `ocr_success=${Boolean(data?.ocr?.success)} suggested_category=${suggestion?.category || 'none'} ` +
+        `source=${suggestion?.source || 'none'} message=${JSON.stringify(data?.vision_message || '')}`,
     );
-    const suggestedCategory = suggestCategoryFromDetections(mapDetectedObjects(data));
-    return res.status(200).json({ ...data, suggestedCategory });
+    return res.status(200).json({
+      ...data,
+      suggestedCategory: suggestion?.category ?? null,
+      suggestedCategorySource: suggestion?.source ?? null,
+      suggestedCategoryHint: suggestion?.label ?? null,
+      ocrDocumentType: suggestion?.documentType ?? data?.ocr?.document_type ?? null,
+    });
   } catch (err) {
     const mapped = mapAiServiceError(err);
     if (mapped.status === 503) {
@@ -369,18 +399,46 @@ async function createItem(req, res, next) {
 
     const clientEmbedding = parseEmbeddingVector(req.body.embeddingVector);
     const aiResponse = parseAnalyzeResult(req);
-
-    const { vector: embeddingVector, available: embeddingResolved } = await resolveItemEmbedding({
-      body: req.body,
-      file: req.file,
-      aiResponse,
-      clientVector: clientEmbedding,
-    });
-
     const detectedObjects = mapDetectedObjects(aiResponse);
-    const aiMetadata = buildAiMetadata(aiResponse, { embeddingVector });
-    const embeddingAvailable =
-      embeddingResolved === true || aiMetadata.embeddingAvailable === true;
+
+    const userCategoryInput = req.body.userCategory?.trim() || req.body.category;
+    let categoryFields;
+    try {
+      categoryFields = resolveCategoryFields({
+        userCategory: userCategoryInput,
+        detectedObjects,
+        aiResponse,
+      });
+    } catch (catErr) {
+      return res.status(400).json({ error: catErr.message || 'Invalid category' });
+    }
+
+    if (categoryFields.categoryMismatch) {
+      console.warn(
+        '[item] category mismatch user=%s ai=%s effective=%s confidence=%s item_title=%s',
+        categoryFields.userCategory,
+        categoryFields.aiCategory,
+        categoryFields.effectiveCategory,
+        categoryFields.categoryDetectionConfidence,
+        String(req.body.title || '').trim(),
+      );
+    }
+
+    const { vector: embeddingVector, available: embeddingResolved, model: embeddingModel } =
+      await resolveItemEmbedding({
+        body: { ...req.body, category: categoryFields.effectiveCategory },
+        file: req.file,
+        aiResponse,
+        clientVector: clientEmbedding,
+        detectedObjects,
+      });
+
+    const aiMetadata = buildAiMetadata(aiResponse, {
+      embeddingVector,
+      embeddingModel,
+      embeddingResolved,
+    });
+    const embeddingAvailable = embeddingResolved === true;
 
     const secondaryLocationName =
       secondaryLocation && req.body.secondaryLocationName
@@ -393,7 +451,12 @@ async function createItem(req, res, next) {
       title: String(req.body.title).trim(),
       brand: req.body.brand ? String(req.body.brand).trim() : undefined,
       colors,
-      category: req.body.category,
+      category: categoryFields.category,
+      userCategory: categoryFields.userCategory,
+      aiCategory: categoryFields.aiCategory,
+      effectiveCategory: categoryFields.effectiveCategory,
+      categoryMismatch: categoryFields.categoryMismatch,
+      categoryDetectionConfidence: categoryFields.categoryDetectionConfidence,
       locationName: String(req.body.locationName).trim(),
       distinctiveFeatures: req.body.distinctiveFeatures
         ? String(req.body.distinctiveFeatures).trim()
@@ -441,7 +504,21 @@ async function getItems(req, res, next) {
     const skip = (page - 1) * limit;
 
     const filter = { isDeleted: { $ne: true } };
-    if (category) filter.category = category;
+    if (category) {
+      const categoryClause = {
+        $or: [
+          { category },
+          { effectiveCategory: category },
+          { userCategory: category },
+        ],
+      };
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, categoryClause];
+        delete filter.$or;
+      } else {
+        Object.assign(filter, categoryClause);
+      }
+    }
     if (reportType) filter.reportType = reportType;
     if (ownerId) filter.ownerId = ownerId;
     if (status) filter.status = status;

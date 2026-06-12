@@ -19,6 +19,8 @@
 
 const { embedItemReport } = require('../services/aiClient');
 
+const EXPECTED_EMBEDDING_DIM = 512;
+
 function parseJsonArray(raw) {
   if (raw == null || raw === '') return [];
   if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
@@ -56,22 +58,51 @@ function extractFeaturePoints(aiResponse) {
   return [];
 }
 
-function extractObjectLabels(aiResponse) {
-  if (!aiResponse || typeof aiResponse !== 'object') return [];
-  const block = aiResponse.object_detection || aiResponse.objectDetection;
-  const list = block?.detected_objects || block?.detectedObjects || [];
-  if (!Array.isArray(list)) return [];
-  return list
-    .map((row) => row?.class_name || row?.className || '')
+function extractObjectLabels(aiResponse, detectedObjects = []) {
+  if (aiResponse && typeof aiResponse === 'object') {
+    const block = aiResponse.object_detection || aiResponse.objectDetection;
+    const list = block?.detected_objects || block?.detectedObjects || [];
+    if (Array.isArray(list) && list.length) {
+      return list
+        .map((row) => row?.class_name || row?.className || '')
+        .map((name) => String(name).trim())
+        .filter(Boolean);
+    }
+  }
+  if (!Array.isArray(detectedObjects)) return [];
+  return detectedObjects
+    .map((row) => row?.className || row?.class_name || '')
     .map((name) => String(name).trim())
     .filter(Boolean);
 }
 
 /**
+ * Reject zero/degenerate vectors that must not be used for matching.
+ *
+ * @param {unknown} vector
+ * @returns {boolean}
+ */
+function isValidEmbeddingVector(vector) {
+  if (!Array.isArray(vector) || vector.length !== EXPECTED_EMBEDDING_DIM) {
+    return false;
+  }
+  if (!vector.every((n) => Number.isFinite(Number(n)))) {
+    return false;
+  }
+  let sumSq = 0;
+  for (const n of vector) {
+    sumSq += Number(n) * Number(n);
+  }
+  const norm = Math.sqrt(sumSq);
+  return norm > 1e-6;
+}
+
+/**
  * @param {import('express').Request['body']} body
  * @param {object | null} aiResponse
+ * @param {Array<{ className?: string }>} [detectedObjects]
  */
-function appendEmbedFormFields(formData, body, aiResponse) {
+function appendEmbedFormFields(formData, body, aiResponse, detectedObjects = []) {
   const append = (key, value) => {
     if (value != null && value !== '') formData.append(key, String(value));
   };
@@ -91,18 +122,18 @@ function appendEmbedFormFields(formData, body, aiResponse) {
   const featurePoints = extractFeaturePoints(aiResponse);
   if (featurePoints.length) append('feature_points', JSON.stringify(featurePoints));
 
-  const objectLabels = extractObjectLabels(aiResponse);
+  const objectLabels = extractObjectLabels(aiResponse, detectedObjects);
   if (objectLabels.length) append('object_labels', JSON.stringify(objectLabels));
 }
 
 /**
  * Resolve embedding at item create from final submitted fields (+ optional image).
  *
- * @returns {Promise<{ vector: number[] | null, available: boolean }>}
+ * @returns {Promise<{ vector: number[] | null, available: boolean, model: string | null, dimension: number | null }>}
  */
-async function resolveItemEmbedding({ body, file, aiResponse, clientVector }) {
+async function resolveItemEmbedding({ body, file, aiResponse, clientVector, detectedObjects = [] }) {
   const formData = new FormData();
-  appendEmbedFormFields(formData, body, aiResponse);
+  appendEmbedFormFields(formData, body, aiResponse, detectedObjects);
 
   if (file?.buffer) {
     const blob = new Blob([file.buffer], { type: file.mimetype || 'image/jpeg' });
@@ -113,25 +144,41 @@ async function resolveItemEmbedding({ body, file, aiResponse, clientVector }) {
     const data = await embedItemReport(formData);
     const vector = data?.embedding_vector ?? data?.embeddingVector;
     const available = data?.embedding_available === true || data?.embeddingAvailable === true;
-    if (available && Array.isArray(vector) && vector.length > 0) {
-      console.log(
-        'resolveItemEmbedding: analyze-time vector no longer provided; relying on embed-item',
+    const model = data?.embedding_model ?? data?.embeddingModel ?? null;
+    const dimension = data?.embedding_dimension ?? data?.embeddingDimension ?? null;
+    if (available && isValidEmbeddingVector(vector)) {
+      console.info(
+        '[itemEmbedding] embed-item success dim=%d model=%s',
+        vector.length,
+        model || 'unknown',
       );
-      return { vector, available: true };
+      return { vector, available: true, model, dimension: dimension || vector.length };
+    }
+    if (available && Array.isArray(vector) && vector.length > 0) {
+      console.warn('[itemEmbedding] embed-item returned degenerate vector — ignoring');
     }
   } catch (err) {
     const detail = err.response?.data?.detail || err.response?.data?.error || err.message;
     console.warn('[itemEmbedding] embed-item failed:', detail);
   }
 
-  if (Array.isArray(clientVector) && clientVector.length > 0) {
-    return { vector: clientVector, available: true };
+  if (isValidEmbeddingVector(clientVector)) {
+    console.warn('[itemEmbedding] using client preview vector — embed-item unavailable');
+    return {
+      vector: clientVector,
+      available: true,
+      model: null,
+      dimension: clientVector.length,
+    };
   }
 
-  return { vector: null, available: false };
+  return { vector: null, available: false, model: null, dimension: null };
 }
 
 module.exports = {
   resolveItemEmbedding,
   extractFeaturePoints,
+  extractObjectLabels,
+  isValidEmbeddingVector,
+  EXPECTED_EMBEDDING_DIM,
 };
