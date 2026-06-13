@@ -41,6 +41,7 @@ class EmbedItemResponse(BaseModel):
     embedding_vector: list[float] = Field(default_factory=list)
     embedding_dimension: int = Field(default=0, ge=0)
     embedding_available: bool = False
+    embedding_model: str | None = None
 
 
 def _orchestrator(request: Request) -> AnalyzeOrchestrator:

@@ -9,6 +9,7 @@ from typing import Any
 from core.inference_provider import InferenceInput, InferenceOutput
 from services.blip_service import BlipService
 from services.clip_service import ClipService
+from utils.gemini_retry import is_transient_error
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class GeminiCaptionProvider:
             )
             return InferenceOutput(
                 success=False,
-                result={"rate_limited": "429" in str(exc).lower() or "quota" in str(exc).lower()},
+                result={"rate_limited": is_transient_error(exc)},
                 error=str(exc),
                 processing_time_ms=elapsed_ms,
                 model_version=self.version,
@@ -124,7 +125,7 @@ class GeminiFeaturesProvider:
             elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
             return InferenceOutput(
                 success=False,
-                result={"rate_limited": "429" in str(exc).lower() or "quota" in str(exc).lower()},
+                result={"rate_limited": is_transient_error(exc)},
                 error=str(exc),
                 processing_time_ms=elapsed_ms,
                 model_version=self.version,

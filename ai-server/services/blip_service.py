@@ -16,10 +16,17 @@ from PIL import Image
 
 from config import get_settings
 from utils.gemini_debug import mask_api_key
-from utils.gemini_retry import generate_content_with_retry, is_rate_limit_error
+from utils.gemini_retry import (
+    extract_response_text,
+    generate_content_with_retry,
+    is_rate_limit_error,
+    is_transient_error,
+)
 from utils.report_caption import (
-    build_structured_fallback_caption,
+    caption_quality_score,
     compose_caption_prompt,
+    explain_caption_validation,
+    is_unusable_caption,
     is_valid_report_caption,
     is_weak_report_caption,
     normalize_caption_output,
@@ -48,7 +55,12 @@ def _generate_caption_attempt(
     retry: bool = False,
     detail_retry: bool = False,
     operation: str = "caption_primary",
-) -> str:
+) -> tuple[str, str]:
+    """
+    Call Gemini for one caption pass.
+
+    Returns ``(raw_text, normalized_caption)``.
+    """
     prompt = compose_caption_prompt(
         context=context,
         retry=retry,
@@ -63,7 +75,29 @@ def _generate_caption_attempt(
         max_attempts=max_attempts,
         operation=operation,
     )
-    return normalize_caption_output(str(getattr(response, "text", None) or ""))
+    raw_text = extract_response_text(response)
+    parsed = normalize_caption_output(raw_text)
+    logger.info(
+        "[caption] pass parse operation=%s raw_chars=%d raw_words=%d parsed_chars=%d parsed_words=%d",
+        operation,
+        len(raw_text),
+        len(raw_text.split()),
+        len(parsed),
+        len(parsed.split()),
+    )
+    if raw_text and raw_text != parsed:
+        logger.debug("[caption] raw response operation=%s text=%r", operation, raw_text[:500])
+    if parsed:
+        logger.info("[caption] parsed caption operation=%s preview=%r", operation, parsed[:200])
+    return raw_text, parsed
+
+
+def _pick_best_caption(candidates: list[str], ocr_payload: dict[str, Any] | None) -> str:
+    """Choose the highest-quality non-empty Gemini attempt."""
+    non_empty = [c.strip() for c in candidates if c and c.strip()]
+    if not non_empty:
+        return ""
+    return max(non_empty, key=lambda text: caption_quality_score(text, ocr_payload))
 
 
 def generate_caption(
@@ -81,9 +115,12 @@ def generate_caption(
     """
     Generate a lost-and-found report description with Gemini Vision.
 
-    Returns ``(caption, rate_limited)``.
+    Returns ``(caption, rate_limited_or_transient_exhausted)``.
+
+    OCR/structured fallbacks are NOT applied here — the orchestrator uses OCR only
+    when this function returns empty or unusable text.
     """
-    del gemini_api_key, fallback_text
+    del gemini_api_key, fallback_text, detected_object_names, category
 
     settings = get_settings()
     model = (model_id or settings.gemini_caption_model or DEFAULT_CAPTION_MODEL).strip()
@@ -115,7 +152,7 @@ def generate_caption(
         logger.info("[caption] PIL decode ok size=%sx%s", image.width, image.height)
         max_output_tokens = settings.gemini_caption_max_output_tokens
         gen_config = types.GenerateContentConfig(
-            temperature=0.58,
+            temperature=0.45,
             max_output_tokens=max_output_tokens,
         )
         configured_passes = (
@@ -124,12 +161,19 @@ def generate_caption(
             else 1
         )
         max_passes = min(configured_passes, len(_CAPTION_GENERATION_PASSES))
+
+        attempts: list[str] = []
         caption = ""
+
         for pass_index, pass_cfg in enumerate(_CAPTION_GENERATION_PASSES[:max_passes], start=1):
-            if pass_index > 1 and not is_weak_report_caption(caption, ocr_payload):
+            if pass_index > 1 and is_valid_report_caption(caption, ocr_payload):
+                logger.info(
+                    "[caption] early exit before pass %d — ideal quality already met",
+                    pass_index,
+                )
                 break
 
-            attempt_caption = _generate_caption_attempt(
+            _raw, attempt_caption = _generate_caption_attempt(
                 client,
                 model,
                 image,
@@ -141,55 +185,64 @@ def generate_caption(
                 operation=str(pass_cfg["operation"]),
             )
             if attempt_caption:
-                caption = attempt_caption
+                attempts.append(attempt_caption)
+                caption = _pick_best_caption(attempts, ocr_payload)
 
+            validation = explain_caption_validation(caption, ocr_payload)
             logger.info(
-                "[caption] pass %d/%d op=%s words=%d chars=%d valid=%s preview=%r",
+                "[caption] pass %d/%d op=%s words=%d chars=%d ideal=%s usable=%s "
+                "validation=%s preview=%r",
                 pass_index,
                 max_passes,
                 pass_cfg["operation"],
                 len(caption.split()),
                 len(caption),
                 is_valid_report_caption(caption, ocr_payload),
+                not is_unusable_caption(caption, ocr_payload),
+                validation or ["ok"],
                 caption[:120],
             )
 
             if is_valid_report_caption(caption, ocr_payload):
                 break
 
-        if is_weak_report_caption(caption, ocr_payload):
-            fallback = build_structured_fallback_caption(
-                ocr_payload,
-                detected_object_names=detected_object_names,
-                category=category,
-            )
-            if fallback and is_valid_report_caption(fallback, ocr_payload):
-                logger.warning(
-                    "[caption] Gemini output weak after %d pass(es) — using structured fallback words=%d",
-                    max_passes,
-                    len(fallback.split()),
-                )
-                caption = fallback
+        caption = _pick_best_caption(attempts, ocr_payload)
 
-        if caption.strip() and is_valid_report_caption(caption, ocr_payload):
-            logger.info("[caption] generate_caption done — SUCCESS")
+        if caption.strip() and not is_unusable_caption(caption, ocr_payload):
+            if is_valid_report_caption(caption, ocr_payload):
+                logger.info(
+                    "[caption] generate_caption done — GEMINI IDEAL words=%d chars=%d",
+                    len(caption.split()),
+                    len(caption),
+                )
+            else:
+                logger.warning(
+                    "[caption] generate_caption done — GEMINI USABLE (below ideal) words=%d "
+                    "chars=%d validation=%s",
+                    len(caption.split()),
+                    len(caption),
+                    explain_caption_validation(caption, ocr_payload),
+                )
         elif caption.strip():
             logger.warning(
-                "[caption] generate_caption done — returning best-effort caption after validation failed "
-                "words=%d",
+                "[caption] generate_caption done — GEMINI UNUSABLE, OCR may apply words=%d "
+                "validation=%s",
                 len(caption.split()),
+                explain_caption_validation(caption, ocr_payload),
             )
+            return "", False
         else:
             logger.warning(
-                "[caption] generate_caption done — empty caption after Gemini response "
-                "(check logs above for HTTP errors or blocked content)"
+                "[caption] generate_caption done — empty after all passes "
+                "(check [gemini] logs for HTTP errors or blocked content)",
             )
+
         return caption, False
     except Exception as exc:
-        rate_limited = is_rate_limit_error(exc)
-        if rate_limited:
+        transient = is_transient_error(exc)
+        if transient:
             logger.error(
-                "[caption] generate_caption FAILED — rate limited model=%s",
+                "[caption] generate_caption FAILED — transient error exhausted retries model=%s",
                 model,
                 exc_info=True,
             )
@@ -200,7 +253,7 @@ def generate_caption(
                 exc,
                 exc_info=True,
             )
-        return "", rate_limited
+        return "", transient
 
 
 def generate_features(
@@ -237,16 +290,16 @@ def generate_features(
             max_attempts=get_settings().gemini_generate_max_attempts,
             operation="features_primary",
         )
-        return str(getattr(response, "text", None) or "").strip(), False
+        return extract_response_text(response), False
     except Exception as exc:
-        rate_limited = is_rate_limit_error(exc)
+        transient = is_transient_error(exc)
         logger.error(
-            "[features] generate_features FAILED model=%s rate_limited=%s",
+            "[features] generate_features FAILED model=%s transient=%s",
             model,
-            rate_limited,
+            transient,
             exc_info=True,
         )
-        return "", rate_limited
+        return "", transient
 
 
 class BlipService:

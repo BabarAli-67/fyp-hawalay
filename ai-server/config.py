@@ -39,9 +39,9 @@ class Settings(BaseSettings):
 
     # Gemini usage controls (free-tier: 1 generate + 1 embed per report ≈ 2 RPM-friendly calls)
     gemini_generate_max_attempts: int = Field(
-        default=1,
+        default=3,
         ge=1,
-        le=3,
+        le=5,
         alias="GEMINI_GENERATE_MAX_ATTEMPTS",
     )
     gemini_caption_quality_retry: bool = Field(
@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     date_window_days: int = Field(default=7, alias="DATE_WINDOW_DAYS")
     match_limit: int = Field(default=5, alias="MATCH_LIMIT")
     max_match_candidates: int = Field(default=100, alias="MAX_MATCH_CANDIDATES")
+    category_bonus: float = Field(default=0.10, alias="CATEGORY_BONUS")
 
     # OCR — YOLO + EasyOCR
     yolo_weights_path: str | None = Field(default=None, alias="YOLO_WEIGHTS_PATH")
@@ -83,7 +84,7 @@ class Settings(BaseSettings):
     easyocr_langs: str = Field(default="en", alias="EASYOCR_LANGS")
     easyocr_use_gpu: bool = Field(default=False, alias="EASYOCR_USE_GPU")
 
-    # Future 21-class object detector (separate weights from card OCR YOLO)
+    # object_v1 — 20-class Keras classifier (separate from card OCR YOLO)
     object_model_path: str | None = Field(default=None, alias="OBJECT_MODEL_PATH")
     object_class_names_path: str | None = Field(default=None, alias="OBJECT_CLASS_NAMES_PATH")
     object_category_map_path: str | None = Field(default=None, alias="OBJECT_CATEGORY_MAP_PATH")
@@ -111,7 +112,13 @@ class Settings(BaseSettings):
     def expected_object_weights_path(self) -> Path:
         if self.object_model_path:
             return Path(self.object_model_path).expanduser().resolve()
-        return Path(__file__).resolve().parent / "artifacts" / "object_v1" / "weights" / "best.pt"
+        return (
+            Path(__file__).resolve().parent
+            / "artifacts"
+            / "object_v1"
+            / "weights"
+            / "hawaly_model_final.keras"
+        )
 
     def expected_object_class_names_path(self) -> Path:
         if self.object_class_names_path:

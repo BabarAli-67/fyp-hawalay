@@ -93,6 +93,7 @@ function appendExtendedReportFields(target, fields) {
     aiDescription,
     distinctiveFeaturesMode,
     aiDistinctiveFeatures,
+    userCategory,
   } = fields;
 
   if (brand?.trim()) target.brand = brand.trim();
@@ -120,6 +121,9 @@ function appendExtendedReportFields(target, fields) {
   if (embeddingVector) target.embeddingVector = JSON.stringify(embeddingVector);
   if (analyzeSnapshot?.raw) {
     target.analyzeResult = JSON.stringify(analyzeSnapshot.raw);
+  }
+  if (userCategory?.trim()) {
+    target.userCategory = userCategory.trim();
   }
 }
 
@@ -176,6 +180,8 @@ export default function ReportPage() {
   const [brand, setBrand] = useState('');
   const [colors, setColors] = useState([]);
   const [category, setCategory] = useState('Electronics');
+  const [userSelectedCategory, setUserSelectedCategory] = useState('Electronics');
+  const [categoryMismatchAcknowledged, setCategoryMismatchAcknowledged] = useState(false);
   const [locationName, setLocationName] = useState('');
   const [locationCoordinates, setLocationCoordinates] = useState(null);
   const [secondaryLocationName, setSecondaryLocationName] = useState('');
@@ -207,6 +213,39 @@ export default function ReportPage() {
   const [isLocatingPrimary, setIsLocatingPrimary] = useState(false);
   const [isLocatingSecondary, setIsLocatingSecondary] = useState(false);
   const { isOnline } = useOfflineQueue();
+
+  const suggestedCategory = analyzeSnapshot?.suggestedCategory || null;
+  const suggestedCategoryHint =
+    analyzeSnapshot?.suggestedCategoryHint ||
+    (analyzeSnapshot?.suggestedCategorySource === 'card_ocr_v1' ? 'identity document' : null);
+  const detectedClassName = useMemo(() => {
+    if (suggestedCategoryHint) return null;
+    const objects = analyzeSnapshot?.objectDetection?.detectedObjects || [];
+    if (!objects.length) return null;
+    const top = [...objects].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+    return top?.className || null;
+  }, [analyzeSnapshot, suggestedCategoryHint]);
+  const categoryMismatchLabel = suggestedCategoryHint || detectedClassName;
+
+  function handleCategoryChange(nextCategory) {
+    setCategory(nextCategory);
+    setUserSelectedCategory(nextCategory);
+    if (suggestedCategory && nextCategory === suggestedCategory) {
+      setCategoryMismatchAcknowledged(true);
+    } else if (!suggestedCategory || nextCategory === suggestedCategory) {
+      setCategoryMismatchAcknowledged(false);
+    }
+  }
+
+  function handleKeepCurrentCategory() {
+    setCategoryMismatchAcknowledged(true);
+  }
+
+  function handleUseSuggestedCategory() {
+    if (!suggestedCategory) return;
+    setCategory(suggestedCategory);
+    setCategoryMismatchAcknowledged(true);
+  }
 
   useEffect(() => {
     return () => {
@@ -299,6 +338,7 @@ export default function ReportPage() {
     setAiDistinctiveFeatures('');
     setOcrError(null);
     setOcrText('');
+    setCategoryMismatchAcknowledged(false);
 
     if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
       setFieldErrors((prev) => ({ ...prev, image: 'Only JPEG and PNG images are allowed.' }));
@@ -364,6 +404,12 @@ export default function ReportPage() {
         }
         if (analyze.embeddingVector) setEmbeddingVector(analyze.embeddingVector);
         setEmbeddingAvailable(analyze.embeddingAvailable);
+        if (
+          analyze.suggestedCategory &&
+          analyze.suggestedCategory !== userSelectedCategory
+        ) {
+          setCategoryMismatchAcknowledged(false);
+        }
       }
     } catch (err) {
       if (requestId !== analyzeRequestRef.current) return;
@@ -529,6 +575,7 @@ export default function ReportPage() {
       ocrText: ocrText || analyzeSnapshot?.ocrText || '',
       embeddingVector,
       analyzeSnapshot,
+      userCategory: userSelectedCategory,
     };
 
     try {
@@ -692,7 +739,7 @@ export default function ReportPage() {
               colors={colors}
               onColorsChange={setColors}
               category={category}
-              onCategoryChange={setCategory}
+              onCategoryChange={handleCategoryChange}
               date={date}
               onDateChange={setDate}
               fieldErrors={fieldErrors}
@@ -726,6 +773,12 @@ export default function ReportPage() {
               embeddingVector={embeddingVector}
               embeddingAvailable={embeddingAvailable}
               fieldErrors={fieldErrors}
+              userSelectedCategory={userSelectedCategory}
+              suggestedCategory={suggestedCategory}
+              detectedClassName={categoryMismatchLabel}
+              categoryMismatchAcknowledged={categoryMismatchAcknowledged}
+              onKeepCurrentCategory={handleKeepCurrentCategory}
+              onUseSuggestedCategory={handleUseSuggestedCategory}
             />
           ) : null}
 
@@ -757,6 +810,8 @@ export default function ReportPage() {
               brand={brand}
               colors={colors}
               category={category}
+              suggestedCategory={suggestedCategory}
+              detectedClassName={categoryMismatchLabel}
               date={date}
               locationName={locationName}
               secondaryLocationName={secondaryLocationName}

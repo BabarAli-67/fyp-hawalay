@@ -69,14 +69,18 @@ pip-log.txt
 # --- ML weights & large local artifacts (deploy / mount separately) ---
 ai-server/artifacts/**/*.pt
 ai-server/artifacts/**/*.pth
+ai-server/artifacts/**/*.keras
 !ai-server/artifacts/**/.gitkeep
 !ai-server/artifacts/ocr/weights/best.pt
+!ai-server/artifacts/object_v1/weights/hawaly_model_final.keras
 *.pt
 *.pth
 !ai-server/artifacts/ocr/weights/best.pt
 *.onnx
 *.weights
 *.h5
+*.keras
+!ai-server/artifacts/object_v1/weights/hawaly_model_final.keras
 *.pkl
 
 # Friend's YOLO/OCR training repo (~600 MB+) — local dev only, not for GitHub/production

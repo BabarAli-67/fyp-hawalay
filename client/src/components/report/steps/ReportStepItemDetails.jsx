@@ -1,6 +1,7 @@
 import { AiPipelinePanel } from '../AiPipelinePanel.jsx';
 import { ModeToggle } from '../ModeToggle.jsx';
 import { AiExtractionPanel } from '../AiExtractionPanel.jsx';
+import { CategoryMismatchBanner } from '../CategoryMismatchBanner.jsx';
 import { ReportSection } from '../ReportSection.jsx';
 import { Spinner } from '../../ui/Spinner.jsx';
 import { DESCRIPTION_MODES, FEATURES_MODES } from '../reportFormConstants.js';
@@ -64,6 +65,12 @@ export function ReportStepItemDetails({
   embeddingVector,
   embeddingAvailable,
   fieldErrors,
+  userSelectedCategory,
+  suggestedCategory,
+  detectedClassName,
+  categoryMismatchAcknowledged,
+  onKeepCurrentCategory,
+  onUseSuggestedCategory,
 }) {
   const aiBusy = isProcessingImage || isProcessingOcr;
 
@@ -114,6 +121,19 @@ export function ReportStepItemDetails({
         </div>
 
         <AiExtractionPanel analyze={analyzeSnapshot} isLoading={isProcessingOcr} error={ocrError} />
+
+        {suggestedCategory &&
+        userSelectedCategory &&
+        suggestedCategory !== userSelectedCategory &&
+        !categoryMismatchAcknowledged ? (
+          <CategoryMismatchBanner
+            userCategory={userSelectedCategory}
+            suggestedCategory={suggestedCategory}
+            detectedClassName={detectedClassName}
+            onKeepCurrent={onKeepCurrentCategory}
+            onUseSuggested={onUseSuggestedCategory}
+          />
+        ) : null}
       </ReportSection>
 
       <ReportSection

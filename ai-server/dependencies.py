@@ -12,6 +12,7 @@ from config import Settings, get_settings
 from services.blip_service import BlipService
 from services.clip_service import ClipService
 from services.matching_service import MatchingService
+from services.object_service import ObjectService
 from services.ocr_service import OcrService
 
 
@@ -60,6 +61,13 @@ def get_gemini_client(request: Request) -> Client | None:
     return getattr(request.app.state, "gemini_client", None)
 
 
+def get_object_service(request: Request) -> ObjectService:
+    service = getattr(request.app.state, "object_service", None)
+    if service is None:
+        raise RuntimeError("Object service is not initialized")
+    return service
+
+
 def get_matching_service(request: Request) -> MatchingService:
     service = getattr(request.app.state, "matching_service", None)
     if service is None:
@@ -73,6 +81,7 @@ def get_matching_service(request: Request) -> MatchingService:
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 DbDep = Annotated[Any, Depends(get_db)]
 OcrServiceDep = Annotated[OcrService, Depends(get_ocr_service)]
+ObjectServiceDep = Annotated[ObjectService, Depends(get_object_service)]
 BlipServiceDep = Annotated[BlipService, Depends(get_blip_service)]
 ClipServiceDep = Annotated[ClipService, Depends(get_clip_service)]
 MatchingServiceDep = Annotated[MatchingService, Depends(get_matching_service)]

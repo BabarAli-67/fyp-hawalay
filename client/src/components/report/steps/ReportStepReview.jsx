@@ -1,4 +1,5 @@
 import { ReportSection } from '../ReportSection.jsx';
+import { CategoryMismatchReminder } from '../CategoryMismatchBanner.jsx';
 
 export function ReportStepReview({
   reportType,
@@ -6,6 +7,8 @@ export function ReportStepReview({
   brand,
   colors,
   category,
+  suggestedCategory,
+  detectedClassName,
   date,
   locationName,
   secondaryLocationName,
@@ -17,8 +20,18 @@ export function ReportStepReview({
   isOnline,
   onGoToStep,
 }) {
+  const hasCategoryMismatch =
+    suggestedCategory && category && suggestedCategory !== category;
+
   return (
     <ReportSection title="Submission Summary" subtitle="Review before submitting.">
+      {hasCategoryMismatch ? (
+        <CategoryMismatchReminder
+          userCategory={category}
+          suggestedCategory={suggestedCategory}
+          detectedClassName={detectedClassName}
+        />
+      ) : null}
       <dl className="space-y-sm font-body-md text-on-surface">
         <div className="flex justify-between gap-md">
           <dt className="text-on-surface-variant">Type</dt>
@@ -42,7 +55,14 @@ export function ReportStepReview({
         ) : null}
         <div className="flex justify-between gap-md">
           <dt className="text-on-surface-variant">Category</dt>
-          <dd>{category}</dd>
+          <dd>
+            {category}
+            {hasCategoryMismatch ? (
+              <span className="block font-caption text-amber-700 dark:text-amber-300 mt-xs">
+                AI suggests {suggestedCategory} — consider editing before submit.
+              </span>
+            ) : null}
+          </dd>
         </div>
         <div className="flex justify-between gap-md">
           <dt className="text-on-surface-variant">{reportType === 'lost' ? 'Date lost' : 'Date found'}</dt>

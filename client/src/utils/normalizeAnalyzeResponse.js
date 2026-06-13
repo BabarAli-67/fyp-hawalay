@@ -152,6 +152,10 @@ export function normalizeAnalyzeResponse(data) {
     suggestedCategory: normalizeSuggestedCategory(
       data.suggestedCategory ?? data.suggested_category,
     ),
+    suggestedCategorySource: (data.suggestedCategorySource ?? data.suggested_category_source ?? '')
+      .trim() || null,
+    suggestedCategoryHint: (data.suggestedCategoryHint ?? data.suggested_category_hint ?? '').trim() || null,
+    ocrDocumentType: (data.ocrDocumentType ?? data.ocr_document_type ?? '').trim() || null,
     models: data.models || {},
     raw: data,
   };

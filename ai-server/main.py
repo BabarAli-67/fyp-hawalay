@@ -24,6 +24,7 @@ from core.model_ids import CARD_OCR_V1, GEMINI_CAPTION, GEMINI_EMBED, GEMINI_FEA
 from core.model_registry import registry
 from core.object_class_map import load_class_names
 from core.object_model_validation import validate_object_model_artifacts
+from core.keras_object_detector import KerasObjectDetector
 from core.yolo_detector import YoloDetector
 from providers.gemini_vision_provider import (
     GeminiCaptionProvider,
@@ -32,11 +33,13 @@ from providers.gemini_vision_provider import (
 )
 from providers.object_detect_provider import ObjectDetectProvider
 from providers.yolo_ocr_provider import YoloOcrProvider
-from routers import ai, blip, clip, health, matching, ocr
+from routers import ai, blip, clip, health, matching, object, ocr
 from services.blip_service import BlipService
 from services.clip_service import ClipService
 from services.matching_service import MatchingService
+from services.object_service import ObjectService
 from services.ocr_service import OcrService
+from utils.category_mapping import load_category_map_from_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -116,17 +119,21 @@ async def lifespan(app: FastAPI):
     app.state.object_model_validation = object_validation
 
     object_class_names = load_class_names(settings.resolved_object_class_names())
-    object_weights = settings.resolved_object_weights()
-    app.state.object_detector = YoloDetector(
-        object_weights,
+    object_weights_path = settings.expected_object_weights_path()
+    app.state.object_detector = KerasObjectDetector(
+        object_weights_path,
         confidence=settings.object_confidence_threshold,
         use_gpu=settings.object_use_gpu,
         class_names=object_class_names,
     )
     if app.state.object_detector.is_ready and object_validation.ready:
+        detector_status = app.state.object_detector.status
         logger.info(
-            "Object detector ready (%d classes)",
+            "Object detector ready (%d classes, mode=%s, input=%s, output=%s)",
             len(object_class_names),
+            detector_status.get("output_mode"),
+            detector_status.get("input_shape"),
+            detector_status.get("output_shape"),
         )
     elif app.state.object_detector.is_ready:
         logger.warning(
@@ -148,6 +155,12 @@ async def lifespan(app: FastAPI):
         gemini_api_key=settings.gemini_api_key,
         client=app.state.gemini_client,
     )
+    app.state.object_service = ObjectService(
+        app.state.object_detector,
+        app.state.blip_service,
+        category_map=load_category_map_from_settings(settings),
+        settings=settings,
+    )
     app.state.clip_service = ClipService(
         model_id=settings.gemini_embedding_model,
         gemini_api_key=settings.gemini_api_key,
@@ -160,6 +173,7 @@ async def lifespan(app: FastAPI):
         date_window_days=settings.date_window_days,
         match_limit=settings.match_limit,
         max_candidates=settings.max_match_candidates,
+        category_bonus=settings.category_bonus,
     )
 
     app.state.model_registry = registry
@@ -217,6 +231,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(ai.router)
     app.include_router(ocr.router)
+    app.include_router(object.router)
     app.include_router(blip.router)
     app.include_router(clip.router)
     app.include_router(matching.router)

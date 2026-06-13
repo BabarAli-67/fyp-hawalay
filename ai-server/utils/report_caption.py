@@ -19,10 +19,14 @@ from utils.analyze_context import (
 
 FIELD_HINT_LABELS = FIELD_LABEL_OVERRIDES
 
-# Target: rich enough to imagine the object; still sounds like a person wrote it.
+# Ideal quality (early-exit when a pass meets this bar).
 MIN_CAPTION_WORDS = 25
 MIN_CAPTION_CHARS = 80
 MIN_CAPTION_SENTENCES = 2
+
+# Minimum bar for keeping a Gemini caption instead of OCR fallback.
+MIN_USABLE_CAPTION_WORDS = 8
+MIN_USABLE_CAPTION_CHARS = 40
 
 # Trailing fragments that indicate the model stopped mid-sentence.
 INCOMPLETE_TRAILING_PATTERNS: tuple[str, ...] = (
@@ -45,56 +49,51 @@ INCOMPLETE_TRAILING_PATTERNS: tuple[str, ...] = (
     r"\b(a|an|the|in|on|of|for|to|from|at|by|as)\s*$",
 )
 
-REPORT_CAPTION_INSTRUCTION = """You help people write lost-and-found item descriptions for Hawalay.
+REPORT_CAPTION_INSTRUCTION = """You are a professional lost-and-found report writer for Hawalay.
 
-Look carefully at the photo. Write so a stranger can PICTURE the item in their mind.
+Study the photo carefully and write a clear, complete description a stranger can use to recognize the item.
 
-LENGTH & STYLE:
-- Write 2–4 COMPLETE sentences, about 50–120 words (do not stop at one short line)
-- Every sentence must be grammatically complete — never end mid-phrase
-- The description MUST end with a period (.), question mark (?), or exclamation mark (!)
-- Conversational English — like explaining the item to a friend at a help desk
-- NOT robotic, NOT a bullet list, NOT copied field labels from background notes
+LENGTH & STYLE (mandatory):
+- Write exactly 2–4 COMPLETE sentences, between 50 and 100 words total
+- Use professional, natural English — polite and specific, not robotic
+- Every sentence must be grammatically finished — NEVER stop mid-phrase
+- The final sentence MUST end with a period (.)
+- Do NOT use bullet points, labels, colons lists, or field names from background notes
 
-INCLUDE every detail you can honestly see (skip only if not visible):
-- What it is (keys, laptop, wallet, phone, bag, ID card, watch, etc.)
-- Colors and materials (black, brown leather, silver metal, transparent cover…)
-- Brand or logo if visible (Dell, Samsung, Meezan Bank, Nike…)
-- Condition in plain words (good condition, scratched, cracked screen, worn corners, clean, old, damaged…)
-- Notable parts (EMV chip, keyboard, card slots, keychain, charger, straps, chains…)
-- Accessories attached (teddy on keychain, case, lanyard, stickers…)
-- Owner name on cards/IDs only when clearly shown — woven into a full sentence
+INCLUDE every detail you can honestly see:
+- Item type (wallet, phone, keys, bank card, ID card, bag, laptop, etc.)
+- Colors, materials, patterns, and visible branding
+- Condition (excellent, good, worn, scratched, cracked, clean, etc.)
+- Distinctive parts (EMV chip, magnetic stripe, keychain, slots, screen, logo placement)
+- Owner name on cards/IDs only when clearly printed — weave it into a full sentence
 
-GOOD examples (depth + human voice):
-- "Three keys on a keychain, including one black key and two metallic keys, with a small brown teddy accessory on the ring."
-- "Silver Dell laptop in used condition with visible scratches near the edges and a black keyboard."
-- "Brown leather wallet with multiple card slots and slightly worn corners."
-- "Black Samsung smartphone with a cracked screen and a transparent back cover."
-- "Green national ID card belonging to Muhammad Ali with personal details visible; edges look slightly worn."
-- "Blue Meezan Bank debit card belonging to Ahmad Raza, chip on the front, overall good condition."
+GOOD example (bank card — note the complete ending):
+"This is a dark blue HBL World debit card from Habib Bank Limited, issued to Ayesha Khan with a gold EMV chip on the front. The card has a subtle diagonal striped pattern across the face and standard payment network branding. It appears to be in excellent condition with no visible scratches or damage on the surface."
 
-BAD examples (too short, generic, or machine-like):
-- "Keys found"
-- "Wallet found"
-- "Black wallet"
-- "Muhammad Ali"
-- "Cardholder name detected: Ahmad Raza"
-- "Item in image"
+OTHER good examples:
+- "Three keys on a metal keychain, including one black key and two silver keys, with a small brown teddy bear charm attached to the ring."
+- "Silver Dell laptop in used condition with light scratches along the lid edges and a black backlit keyboard."
+
+BAD examples (never output these):
+- "Dark blue bank card featuring a"  (incomplete)
+- "Card found" / "Black wallet" / "Item in image"
+- "Cardholder name: Ahmad Raza; Expiry: 11/28"  (field dump)
 
 RULES:
-- Photo is primary evidence; background notes are hints only — never paste them verbatim
-- Do NOT use "detected", "extracted", "visible", "OCR", or semicolon-separated field lists
-- Do NOT invent brands, damage, or accessories you cannot see
-- NEVER stop mid-sentence (bad: "featuring a", "with a", "showing a", "containing a")
-- Output ONLY the description — no title, no quotes, no preamble"""
+- The photo is primary evidence; background notes are hints only
+- Do NOT use words: detected, extracted, OCR, automated
+- Do NOT invent details you cannot see
+- Output ONLY the description paragraph — no title, no quotes, no preamble"""
 
 REPORT_CAPTION_RETRY_SUFFIX = """
-Your last answer was incomplete, too short, too generic, too robotic, or missing obvious visual detail.
-Rewrite with 2–4 FULL sentences that end with proper punctuation. Include object type, color, branding (if seen), condition, and key visual features — so the reader can imagine the object clearly. Do not end mid-phrase."""
+Your previous answer was too short, incomplete, or ended mid-sentence.
+Rewrite as 2–4 FULL sentences (50–100 words). Describe colors, branding, condition, and distinctive features.
+Finish the last sentence completely and end with a period. Do not trail off with phrases like "featuring a" or "with a"."""
 
 REPORT_CAPTION_DETAIL_RETRY_SUFFIX = """
-Your last answer still failed quality checks (incomplete sentence, too short, or missing detail).
-Write a complete paragraph as if helping someone search a busy lost-and-found room: object type, color, brand/logo, condition, and anything attached or distinctive — in 2–4 natural full sentences ending with a period."""
+Your previous answer still did not meet requirements.
+Write a polished lost-and-found paragraph (50–100 words, 2–4 sentences) covering item type, color, brand/logo, visible text or chip, and overall condition.
+Every sentence must be complete. End the final sentence with a period."""
 
 CAPTION_CONTEXT_PREAMBLE = """Background notes (use to inform your writing — do NOT copy labels or bullet formatting into your answer):"""
 
@@ -298,8 +297,85 @@ def is_incomplete_report_caption(caption: str) -> bool:
     return False
 
 
+def explain_caption_validation(
+    caption: str,
+    ocr_payload: dict[str, Any] | None = None,
+) -> list[str]:
+    """Human-readable reasons why a caption fails ideal or usable quality checks."""
+    text = (caption or "").strip()
+    reasons: list[str] = []
+
+    if not text:
+        return ["empty_caption"]
+
+    words = text.split()
+    if len(text) < MIN_USABLE_CAPTION_CHARS:
+        reasons.append(f"below_usable_chars:{len(text)}<{MIN_USABLE_CAPTION_CHARS}")
+    if len(words) < MIN_USABLE_CAPTION_WORDS:
+        reasons.append(f"below_usable_words:{len(words)}<{MIN_USABLE_CAPTION_WORDS}")
+    if len(text) < MIN_CAPTION_CHARS:
+        reasons.append(f"below_ideal_chars:{len(text)}<{MIN_CAPTION_CHARS}")
+    if len(words) < MIN_CAPTION_WORDS:
+        reasons.append(f"below_ideal_words:{len(words)}<{MIN_CAPTION_WORDS}")
+
+    if is_incomplete_report_caption(text):
+        if not ends_with_proper_punctuation(text):
+            reasons.append("missing_terminal_punctuation")
+        for pattern in INCOMPLETE_TRAILING_PATTERNS:
+            if re.search(pattern, text.lower(), flags=re.IGNORECASE):
+                reasons.append(f"incomplete_trailing:{pattern}")
+                break
+        if count_complete_sentences(text) < MIN_CAPTION_SENTENCES:
+            reasons.append(
+                f"insufficient_sentences:{count_complete_sentences(text)}<{MIN_CAPTION_SENTENCES}",
+            )
+
+    if is_robotic_report_caption(text):
+        reasons.append("robotic_markers")
+    if is_generic_report_caption(text):
+        reasons.append("generic_phrase")
+    if _caption_matches_single_extracted_value(text, ocr_payload):
+        reasons.append("matches_single_ocr_value")
+
+    return reasons
+
+
+def is_unusable_caption(caption: str, ocr_payload: dict[str, Any] | None = None) -> bool:
+    """
+    True only when Gemini output should be discarded in favour of OCR fallback.
+
+    Usable Gemini captions are kept even if they fail ideal length/completeness checks.
+    """
+    text = (caption or "").strip()
+    if not text:
+        return True
+
+    words = text.split()
+    if len(words) < MIN_USABLE_CAPTION_WORDS or len(text) < MIN_USABLE_CAPTION_CHARS:
+        return True
+
+    if is_robotic_report_caption(text):
+        return True
+
+    if is_generic_report_caption(text) and len(words) <= 5:
+        return True
+
+    if _caption_matches_single_extracted_value(text, ocr_payload):
+        return True
+
+    return False
+
+
+def caption_quality_score(caption: str, ocr_payload: dict[str, Any] | None = None) -> tuple[int, int, int]:
+    """Sort key for picking the best Gemini attempt (higher is better)."""
+    text = (caption or "").strip()
+    usable = 0 if is_unusable_caption(text, ocr_payload) else 1
+    ideal = 0 if is_weak_report_caption(text, ocr_payload) else 1
+    return (usable, ideal, len(text.split()))
+
+
 def is_valid_report_caption(caption: str, ocr_payload: dict[str, Any] | None = None) -> bool:
-    """True when a caption is complete, detailed, and safe to return."""
+    """True when a caption meets ideal quality (early-exit for multi-pass generation)."""
     return not is_weak_report_caption(caption, ocr_payload)
 
 
@@ -473,6 +549,11 @@ def normalize_caption_output(caption: str) -> str:
     text = (caption or "").strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in '"\'':
         text = text[1:-1].strip()
-    if text.lower().startswith("description:"):
-        text = text.split(":", 1)[-1].strip()
+    for prefix in ("description:", "caption:", "answer:"):
+        if text.lower().startswith(prefix):
+            text = text.split(":", 1)[-1].strip()
+            break
+    # Collapse internal whitespace while preserving sentence boundaries.
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{2,}", "\n", text).strip()
     return text

@@ -23,8 +23,7 @@ from utils.analyze_context import build_analyze_context, build_extracted_attribu
 from utils.report_caption import (
     build_caption_context_from_analyze,
     build_ocr_fallback_caption,
-    build_structured_fallback_caption,
-    is_weak_report_caption,
+    is_unusable_caption,
 )
 from utils.report_features import format_feature_bullets, resolve_feature_points
 from utils.gemini_debug import mask_api_key
@@ -297,26 +296,14 @@ class AnalyzeOrchestrator:
                 features_raw = (feat_result.get("features_text") or "").strip()
 
             ocr_ok = bool(ocr_payload and ocr_payload.get("success"))
-            if caption.strip() and is_weak_report_caption(caption, ocr_payload):
-                structured_fallback = build_structured_fallback_caption(
-                    ocr_payload,
-                    detected_object_names=detected_object_names,
-                    category=category,
+            gemini_unusable = is_unusable_caption(caption, ocr_payload)
+            if caption.strip() and gemini_unusable:
+                logger.warning(
+                    "[vision] Gemini caption unusable — will try OCR fallback if available words=%d",
+                    len(caption.split()),
                 )
-                if structured_fallback:
-                    logger.warning(
-                        "[vision] replacing weak Gemini caption with structured fallback words=%d",
-                        len(structured_fallback.split()),
-                    )
-                    caption = structured_fallback
-                    if vision_status == "ok":
-                        vision_status = "ocr_fallback"
-                        vision_message = (
-                            "AI description was incomplete — replaced with a structured description "
-                            "from detected image attributes."
-                        )
 
-            if not caption.strip() and ocr_ok:
+            if gemini_unusable and ocr_ok:
                 fallback = build_ocr_fallback_caption(ocr_payload)
                 if fallback:
                     caption = fallback
@@ -534,6 +521,7 @@ class AnalyzeOrchestrator:
             "embedding_vector": [0.0] * CLIP_EMBEDDING_DIM,
             "embedding_dimension": CLIP_EMBEDDING_DIM,
             "embedding_available": False,
+            "embedding_model": self._settings.gemini_embedding_model,
         }
 
         enriched = build_enriched_text(
@@ -555,6 +543,12 @@ class AnalyzeOrchestrator:
         if not enriched.strip() and not raw_image:
             logger.info("[embed-item] no text or image — cannot build embedding")
             return empty
+
+        logger.info(
+            "[embed-item] enriched text chars=%d preview=%r",
+            len(enriched),
+            enriched[:240] + ("…" if len(enriched) > 240 else ""),
+        )
 
         text_vec = None
         img_vec = None
@@ -595,6 +589,7 @@ class AnalyzeOrchestrator:
                 "embedding_vector": vector,
                 "embedding_dimension": len(vector),
                 "embedding_available": embedding_available and any(v != 0.0 for v in vector),
+                "embedding_model": self._settings.gemini_embedding_model,
             }
         except Exception as exc:
             logger.warning("[embed-item] failed: %s", exc)

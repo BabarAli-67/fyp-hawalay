@@ -26,11 +26,6 @@ function DetectionRow({ detection }) {
         <p className="font-body-md text-on-surface capitalize">
           {detection.className.replace(/_/g, ' ')}
         </p>
-        {detection.bbox?.length === 4 ? (
-          <p className="font-caption text-on-surface-variant">
-            bbox [{detection.bbox.join(', ')}]
-          </p>
-        ) : null}
       </div>
       <span className="shrink-0 rounded-full bg-secondary-container px-sm py-xs font-caption text-on-secondary-container">
         {formatConfidence(detection.confidence)}
@@ -128,7 +123,6 @@ export function AiExtractionPanel({ analyze, isLoading, error }) {
                   detection={{
                     className: det.key || det.className,
                     confidence: det.confidence,
-                    bbox: det.bbox,
                   }}
                 />
               ))}
