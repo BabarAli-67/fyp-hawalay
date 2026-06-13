@@ -17,7 +17,7 @@ opencv-python-headless==4.10.0.84
 ultralytics>=8.3.0,<9.0
 
 # object_v1 — InceptionV3 Keras classifier (friend's training stack, ~6 months ago)
-# Use Python 3.10–3.12 (TensorFlow has no wheels for 3.13+ yet).
+# Use Python 3.11–3.12 (TensorFlow 2.20 / numpy 2.3.x; no 3.13+ wheels yet).
 # Training-only deps (not needed at runtime): scikit-learn, matplotlib, torch/torchvision.
 tensorflow==2.20.0
 keras==3.12.0
