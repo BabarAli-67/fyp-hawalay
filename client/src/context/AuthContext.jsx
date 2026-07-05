@@ -2,8 +2,10 @@ import { jwtDecode } from 'jwt-decode';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import axiosInstance from '../api/axiosInstance.js';
+import { fetchAndCacheChatRooms } from '../api/chatService.js';
 import { connectMatchSocket, disconnectMatchSocket } from '../socket/matchSocket.js';
 import { clearChatCache } from '../utils/chatCache.js';
+import { countUnreadChatRooms } from '../utils/chatUnread.js';
 
 const AUTH_TOKEN_KEY = 'auth_token';
 const AUTH_USER_KEY = 'auth_user';
@@ -39,9 +41,11 @@ export function AuthProvider({ children }) {
   const [socket, setSocket] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(() => Boolean(initial.token));
   const [unreadCount, setUnreadCount] = useState(0);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
 
   const lastUnreadFetchAtRef = useRef(0);
   const unreadFetchTimerRef = useRef(null);
+  const chatInboxFetchInflightRef = useRef(null);
 
   const logout = useCallback(() => {
     disconnectMatchSocket();
@@ -51,6 +55,7 @@ export function AuthProvider({ children }) {
     setToken(null);
     setUser(null);
     setUnreadCount(0);
+    setChatUnreadCount(0);
     if (unreadFetchTimerRef.current) {
       clearTimeout(unreadFetchTimerRef.current);
       unreadFetchTimerRef.current = null;
@@ -58,6 +63,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback((newToken, userData) => {
+    clearChatCache();
     localStorage.setItem(AUTH_TOKEN_KEY, newToken);
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData));
     setToken(newToken);
@@ -100,6 +106,34 @@ export function AuthProvider({ children }) {
       unreadFetchTimerRef.current = setTimeout(runFetch, UNREAD_FETCH_DEBOUNCE_MS - elapsed);
     }
   }, [token]);
+
+  const fetchChatInbox = useCallback(async () => {
+    const userId = user?._id;
+    if (!token || !userId) {
+      setChatUnreadCount(0);
+      return [];
+    }
+
+    if (chatInboxFetchInflightRef.current) {
+      return chatInboxFetchInflightRef.current;
+    }
+
+    const promise = fetchAndCacheChatRooms()
+      .then((rooms) => {
+        setChatUnreadCount(countUnreadChatRooms(rooms, userId));
+        return rooms;
+      })
+      .catch(() => {
+        setChatUnreadCount(0);
+        return [];
+      })
+      .finally(() => {
+        chatInboxFetchInflightRef.current = null;
+      });
+
+    chatInboxFetchInflightRef.current = promise;
+    return promise;
+  }, [token, user?._id]);
 
   useEffect(() => {
     const stored = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -157,7 +191,19 @@ export function AuthProvider({ children }) {
   }, [token, fetchUnreadCount]);
 
   useEffect(() => {
+    if (!token || !user?._id) {
+      setChatUnreadCount(0);
+      return;
+    }
+    fetchChatInbox();
+  }, [token, user?._id, fetchChatInbox]);
+
+  useEffect(() => {
     if (!token) return undefined;
+
+    function handleRefreshChats() {
+      fetchChatInbox();
+    }
 
     function handleMatchFound(event) {
       const payload = event.detail ?? {};
@@ -168,6 +214,7 @@ export function AuthProvider({ children }) {
           : 'New match found for your item!',
       );
       fetchUnreadCount();
+      fetchChatInbox();
       window.dispatchEvent(new CustomEvent('hawalay:refresh-matches', { detail: payload }));
     }
 
@@ -175,13 +222,15 @@ export function AuthProvider({ children }) {
       fetchUnreadCount();
     }
 
+    window.addEventListener('hawalay:refresh-chats', handleRefreshChats);
     window.addEventListener('hawalay:match-found', handleMatchFound);
     window.addEventListener('hawalay:unread-refetch', handleUnreadRefetch);
     return () => {
+      window.removeEventListener('hawalay:refresh-chats', handleRefreshChats);
       window.removeEventListener('hawalay:match-found', handleMatchFound);
       window.removeEventListener('hawalay:unread-refetch', handleUnreadRefetch);
     };
-  }, [token, fetchUnreadCount]);
+  }, [token, fetchUnreadCount, fetchChatInbox]);
 
   useEffect(
     () => () => {
@@ -199,12 +248,14 @@ export function AuthProvider({ children }) {
       socket,
       isAuthLoading,
       unreadCount,
+      chatUnreadCount,
       fetchUnreadCount,
+      fetchChatInbox,
       login,
       logout,
       updateUser,
     }),
-    [user, token, socket, isAuthLoading, unreadCount, fetchUnreadCount, login, logout, updateUser],
+    [user, token, socket, isAuthLoading, unreadCount, chatUnreadCount, fetchUnreadCount, fetchChatInbox, login, logout, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

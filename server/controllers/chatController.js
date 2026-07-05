@@ -22,6 +22,7 @@ async function getLastMessagesByRoom(matchIds) {
         content: { $first: '$content' },
         createdAt: { $first: '$createdAt' },
         senderId: { $first: '$senderId' },
+        readBy: { $first: '$readBy' },
       },
     },
   ]);
@@ -40,6 +41,16 @@ function mergeMatchesById(primary, extra) {
   return [...byId.values()].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
+}
+
+function isRoomUnreadForUser(preview, userId) {
+  if (!preview?.content) return false;
+  const senderId = preview.senderId?.toString?.() ?? String(preview.senderId ?? '');
+  if (!senderId || senderId === userId) return false;
+  const readBy = Array.isArray(preview.readBy)
+    ? preview.readBy.map((id) => id.toString())
+    : [];
+  return !readBy.includes(userId);
 }
 
 async function listChatRooms(req, res, next) {
@@ -143,8 +154,10 @@ async function listChatRooms(req, res, next) {
                 content: preview.content,
                 createdAt: preview.createdAt,
                 senderId: preview.senderId,
+                readBy: preview.readBy || [],
               }
             : null,
+          unread: isRoomUnreadForUser(preview, userId),
           createdAt: m.createdAt,
         };
       })

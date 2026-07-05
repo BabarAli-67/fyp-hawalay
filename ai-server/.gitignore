@@ -19,4 +19,3 @@ artifacts/**/*.pth
 artifacts/**/*.keras
 !artifacts/**/.gitkeep
 !artifacts/ocr/weights/best.pt
-!artifacts/object_v1/weights/hawaly_model_final.keras

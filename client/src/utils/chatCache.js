@@ -34,6 +34,10 @@ export function setCachedMessages(matchId, payload) {
   });
 }
 
+export function deleteCachedMessages(matchId) {
+  messagesByMatchId.delete(String(matchId));
+}
+
 export function clearChatCache() {
   roomsState.loaded = false;
   roomsState.rooms = [];

@@ -9,6 +9,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "load_json_file",
+    "normalize_class_name_list",
+    "load_class_names",
+    "load_class_name_list",
+    "load_category_mapping",
+]
+
 
 def load_json_file(path: Path | None) -> dict[str, Any] | list[Any] | None:
     if path is None or not path.is_file():
@@ -19,6 +27,22 @@ def load_json_file(path: Path | None) -> dict[str, Any] | list[Any] | None:
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Could not load JSON from %s: %s", path, exc)
         return None
+
+
+def normalize_class_name_list(raw: Any) -> list[str]:
+    """Ordered class labels from JSON list or id→name dict."""
+    if isinstance(raw, list):
+        return [str(name).strip() for name in raw if str(name).strip()]
+    if isinstance(raw, dict):
+        ordered: list[tuple[int, str]] = []
+        for key, value in raw.items():
+            try:
+                ordered.append((int(key), str(value).strip()))
+            except (TypeError, ValueError):
+                continue
+        ordered.sort(key=lambda pair: pair[0])
+        return [name for _, name in ordered if name]
+    return []
 
 
 def load_class_names(path: Path | None) -> dict[int, str]:
@@ -43,20 +67,12 @@ def load_class_names(path: Path | None) -> dict[int, str]:
     return {}
 
 
-def normalize_class_name_list(raw: Any) -> list[str]:
-    """Ordered class labels from JSON list or id→name dict."""
-    if isinstance(raw, list):
-        return [str(name).strip() for name in raw if str(name).strip()]
-    if isinstance(raw, dict):
-        ordered: list[tuple[int, str]] = []
-        for key, value in raw.items():
-            try:
-                ordered.append((int(key), str(value).strip()))
-            except (TypeError, ValueError):
-                continue
-        ordered.sort(key=lambda pair: pair[0])
-        return [name for _, name in ordered if name]
-    return []
+def load_class_name_list(path: Path | None) -> list[str]:
+    """Ordered class labels from ``class_names.json`` (list or id→name dict)."""
+    id_map = load_class_names(path)
+    if not id_map:
+        return []
+    return [id_map[class_id] for class_id in sorted(id_map.keys())]
 
 
 def load_category_mapping(path: Path | None) -> dict[str, str]:

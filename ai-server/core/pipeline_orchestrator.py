@@ -31,6 +31,151 @@ from utils.text_builder import build_enriched_text
 
 logger = logging.getLogger(__name__)
 
+# Document/card uploads — object_v1 has no banking-card class; skip general classifier.
+_CARD_DOCUMENT_TYPES = frozenset(
+    {
+        "credit_card",
+        "cnic",
+        "id_card",
+        "national_id",
+        "passport",
+        "driving_license",
+        "id",
+        "document",
+        "documents",
+    }
+)
+_CARD_STRUCTURAL_YOLO_CLASSES = frozenset(
+    {
+        "card_boundary",
+        "card_brand",
+        "card_number",
+        "cardholder_name",
+        "expiry_date",
+    }
+)
+_CARD_TEXT_FIELD_KEYS = ("card_number", "cardholder_name", "card_brand", "expiry_date")
+
+
+def _normalize_document_type(document_type: str) -> str:
+    return (document_type or "auto").strip().lower()
+
+
+def _user_indicates_document_upload(*, document_type: str, category: str) -> bool:
+    """Pre-OCR signal: explicit document hint or user chose Documents category."""
+    doc = _normalize_document_type(document_type)
+    if doc != "auto" and doc in _CARD_DOCUMENT_TYPES:
+        return True
+    return (category or "").strip() == "Documents"
+
+
+def _ocr_has_card_text_fields(ocr_payload: dict[str, Any]) -> bool:
+    fields = ocr_payload.get("fields")
+    if isinstance(fields, dict):
+        for key in _CARD_TEXT_FIELD_KEYS:
+            entry = fields.get(key)
+            if isinstance(entry, dict):
+                value = entry.get("value")
+            else:
+                value = entry
+            if value is not None and str(value).strip():
+                return True
+    for key in _CARD_TEXT_FIELD_KEYS:
+        flat = ocr_payload.get(key)
+        if flat is not None and str(flat).strip():
+            return True
+    return False
+
+
+def _ocr_resolved_as_card_document(ocr_payload: dict[str, Any]) -> bool:
+    doc = str(ocr_payload.get("document_type") or "").strip().lower()
+    return doc in _CARD_DOCUMENT_TYPES
+
+
+def _yolo_card_structural_confidence(ocr_payload: dict[str, Any]) -> float:
+    """Highest YOLO box confidence among card-region classes in the OCR payload."""
+    best = 0.0
+    for item in ocr_payload.get("detections") or []:
+        if not isinstance(item, dict):
+            continue
+        class_name = str(item.get("class_name") or "").strip()
+        if class_name not in _CARD_STRUCTURAL_YOLO_CLASSES:
+            continue
+        raw = item.get("detection_confidence")
+        if raw is None:
+            raw = item.get("confidence", 0.0)
+        try:
+            best = max(best, float(raw or 0.0))
+        except (TypeError, ValueError):
+            continue
+
+    fields = ocr_payload.get("fields")
+    if isinstance(fields, dict):
+        for key in _CARD_STRUCTURAL_YOLO_CLASSES:
+            entry = fields.get(key)
+            if not isinstance(entry, dict):
+                continue
+            raw = entry.get("detection_confidence")
+            if raw is None:
+                continue
+            try:
+                best = max(best, float(raw))
+            except (TypeError, ValueError):
+                continue
+    return best
+
+
+def _card_pipeline_active(ocr_payload: dict[str, Any], *, yolo_threshold: float) -> bool:
+    """
+    Post-OCR signal: resolved document type, high-confidence YOLO card regions,
+    or successful structured card text extraction.
+    """
+    if not ocr_payload:
+        return False
+    if _ocr_resolved_as_card_document(ocr_payload):
+        return True
+    if _yolo_card_structural_confidence(ocr_payload) >= yolo_threshold:
+        return True
+    if bool(ocr_payload.get("success")) and _ocr_has_card_text_fields(ocr_payload):
+        return True
+    return False
+
+
+def _card_pipeline_processing_text(ocr_payload: dict[str, Any]) -> bool:
+    if not ocr_payload or not ocr_payload.get("success"):
+        return False
+    if _ocr_has_card_text_fields(ocr_payload):
+        return True
+    return bool((ocr_payload.get("ocr_text") or "").strip())
+
+
+def _best_object_confidence(block: ObjectDetectionResult) -> float:
+    if not block.detected_objects:
+        return 0.0
+    return max(obj.confidence for obj in block.detected_objects)
+
+
+def _skipped_object_detection(message: str) -> ObjectDetectionResult:
+    return ObjectDetectionResult(
+        model=OBJECT_V1,
+        status="skipped",
+        ready=False,
+        message=message,
+        detected_objects=[],
+    )
+
+
+def _nullify_object_detection(block: ObjectDetectionResult, reason: str) -> ObjectDetectionResult:
+    return ObjectDetectionResult(
+        model=block.model or OBJECT_V1,
+        version=block.version,
+        status="skipped",
+        ready=False,
+        message=reason,
+        detected_objects=[],
+        processing_time_ms=block.processing_time_ms,
+    )
+
 
 def ensure_embedding_512(vec: np.ndarray | None) -> list[float]:
     if vec is None:
@@ -448,12 +593,22 @@ class AnalyzeOrchestrator:
         enable_object_detect: bool = True,
     ) -> dict[str, Any]:
         """Full analyze-image pipeline: OCR → optional objects → vision."""
+        yolo_threshold = self._settings.yolo_confidence_threshold
+        object_threshold = self._settings.object_confidence_threshold
+        pre_skip_object = _user_indicates_document_upload(
+            document_type=document_type,
+            category=category,
+        )
+
         logger.info(
-            "[analyze] run_analyze start bytes=%d document_type=%s object_detect=%s",
+            "[analyze] run_analyze start bytes=%d document_type=%s category=%r object_detect=%s pre_skip_object=%s",
             len(raw_image),
             document_type,
+            category,
             enable_object_detect,
+            pre_skip_object,
         )
+
         ocr_payload = await self.run_card_ocr(
             image_bytes=raw_image,
             content_type=content_type,
@@ -461,10 +616,57 @@ class AnalyzeOrchestrator:
         )
         structured_ocr_text = (ocr_payload.get("ocr_text") or "").strip()
 
-        object_block = await self.run_object_detection(
-            image_bytes=raw_image,
-            enabled=enable_object_detect,
+        card_active = _card_pipeline_active(ocr_payload, yolo_threshold=yolo_threshold)
+        skip_object = (
+            not enable_object_detect
+            or pre_skip_object
+            or card_active
         )
+
+        if skip_object:
+            if not enable_object_detect:
+                skip_reason = "Object detection disabled for this request"
+            elif pre_skip_object:
+                skip_reason = (
+                    "object_v1 skipped — document/card upload indicated "
+                    f"(document_type={document_type!r}, category={category!r})"
+                )
+            else:
+                skip_reason = (
+                    "object_v1 skipped — card_ocr_v1 detected document/card regions "
+                    f"(document_type={ocr_payload.get('document_type')!r}, "
+                    f"yolo_conf>={yolo_threshold:.2f})"
+                )
+            logger.info("[analyze] %s", skip_reason)
+            object_block = _skipped_object_detection(skip_reason)
+        else:
+            object_block = await self.run_object_detection(
+                image_bytes=raw_image,
+                enabled=True,
+            )
+            nullify_reason = ""
+            if _card_pipeline_processing_text(ocr_payload):
+                nullify_reason = (
+                    "object_v1 suppressed — card_ocr_v1 extracted structured card text"
+                )
+            elif card_active:
+                nullify_reason = (
+                    "object_v1 suppressed — card/document pipeline active "
+                    "(avoids false labels such as eyewear on payment cards)"
+                )
+            elif (
+                object_block.detected_objects
+                and _best_object_confidence(object_block) < object_threshold
+            ):
+                nullify_reason = (
+                    f"object_v1 suppressed — top confidence "
+                    f"{_best_object_confidence(object_block):.2f} below threshold {object_threshold:.2f}"
+                )
+
+            if nullify_reason:
+                logger.info("[analyze] %s", nullify_reason)
+                object_block = _nullify_object_detection(object_block, nullify_reason)
+
         object_names = [obj.class_name for obj in object_block.detected_objects if obj.class_name]
         detected_objects = [obj.model_dump() for obj in object_block.detected_objects]
 

@@ -89,12 +89,12 @@ export default function DashboardPage() {
             </div>
             <span className="text-on-primary-container font-h3 text-h3 leading-tight">Report Found</span>
           </button>
-          <div className="bg-surface-container shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer border border-outline-variant/30">
+          {/* <div className="bg-surface-container shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer border border-outline-variant/30">
             <div className="bg-on-surface-variant/10 w-10 h-10 rounded-lg flex items-center justify-center">
               <span className="material-symbols-outlined text-on-surface-variant">document_scanner</span>
             </div>
             <span className="text-on-surface font-h3 text-h3 leading-tight">Scan Item</span>
-          </div>
+          </div> */}
           <div className="bg-surface-container shadow-sm rounded-xl p-md flex flex-col justify-between aspect-square active:scale-95 transition-transform duration-200 cursor-pointer border border-outline-variant/30">
             <div className="bg-on-surface-variant/10 w-10 h-10 rounded-lg flex items-center justify-center">
               <span className="material-symbols-outlined text-on-surface-variant">history</span>
@@ -105,7 +105,6 @@ export default function DashboardPage() {
         <section className="space-y-md">
           <div className="flex justify-between items-center">
             <h3 className="font-h3 text-h3 text-on-surface">Smart Matches</h3>
-            <span className="bg-tertiary-container/20 text-tertiary font-label-sm px-2 py-1 rounded-full">2 New</span>
           </div>
           <div className="flex flex-col gap-sm">
             <Link

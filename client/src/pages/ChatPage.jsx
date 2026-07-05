@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { fetchAndCacheMessages } from '../api/chatService.js';
-import { getCachedMessages } from '../utils/chatCache.js';
+import { deleteCachedMessages, getCachedMessages } from '../utils/chatCache.js';
 import { shouldShowBottomNav } from '../components/layout/BottomNav.jsx';
 import { PeerAvatar } from '../components/chat/PeerAvatar.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -67,6 +67,39 @@ function runAfterLayout(fn) {
   });
 }
 
+function dedupeMessagesById(messages) {
+  const byId = new Map();
+  for (const msg of messages) {
+    byId.set(String(msg._id), msg);
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+}
+
+function applyServerHistory(data) {
+  const rows = Array.isArray(data?.messages) ? data.messages : [];
+  const messages = dedupeMessagesById(rows.map(normalizeApiMessage));
+  const participants = Array.isArray(data?.participants) ? data.participants : [];
+  return { messages, participants };
+}
+
+/** Server history wins for persisted ids; keep in-flight optimistic sends. */
+function mergeMessageLists(current, serverMessages) {
+  const byId = new Map();
+  for (const msg of serverMessages) {
+    byId.set(String(msg._id), msg);
+  }
+  for (const msg of current) {
+    if (isPendingMessage(msg)) {
+      byId.set(String(msg._id), msg);
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+}
+
 /**
  * Match chat — REST history + Socket.io (chat:join, chat:send, chat:message, chat:typing, chat:read).
  */
@@ -102,6 +135,10 @@ export default function ChatPage() {
   const typingStopRef = useRef(null);
   const matchIdRef = useRef(matchId);
   const snapScrollRef = useRef(true);
+  const fetchGenerationRef = useRef(0);
+  const reconnectGenerationRef = useRef(0);
+  const wasDisconnectedRef = useRef(false);
+  const reconnectFetchInflightRef = useRef(false);
 
   matchIdRef.current = matchId;
 
@@ -149,45 +186,58 @@ export default function ChatPage() {
       return;
     }
 
+    const fetchGeneration = fetchGenerationRef.current + 1;
+    fetchGenerationRef.current = fetchGeneration;
+    wasDisconnectedRef.current = false;
+
     let cancelled = false;
     const cached = getCachedMessages(matchId);
 
     if (cached) {
-      setMessages(cached.messages.map(normalizeApiMessage));
+      setMessages(dedupeMessagesById(cached.messages.map(normalizeApiMessage)));
       setParticipants(cached.participants);
       setIsLoading(false);
+      setIsRefreshing(true);
     } else {
       setMessages([]);
       setParticipants([]);
       setIsLoading(true);
+      setIsRefreshing(false);
     }
     setAccessDenied(false);
     setLoadError(null);
 
     async function loadHistory() {
-      if (cached) {
-        setIsRefreshing(true);
-      } else {
+      if (!cached) {
         setIsLoading(true);
       }
       setAccessDenied(false);
       setLoadError(null);
       try {
         const data = await fetchAndCacheMessages(matchId);
-        if (cancelled) return;
-        const rows = Array.isArray(data?.messages) ? data.messages : [];
-        setMessages(rows.map(normalizeApiMessage));
-        setParticipants(Array.isArray(data?.participants) ? data.participants : []);
+        if (cancelled || fetchGeneration !== fetchGenerationRef.current) return;
+
+        const { messages: freshMessages, participants: freshParticipants } =
+          applyServerHistory(data);
+        setMessages(freshMessages);
+        setParticipants(freshParticipants);
+        setLoadError(null);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || fetchGeneration !== fetchGenerationRef.current) return;
+
+        deleteCachedMessages(matchId);
+
         if (isAccessDeniedError(err)) {
           setAccessDenied(true);
           setMessages([]);
-        } else if (!cached) {
+          setParticipants([]);
+        } else {
           setLoadError(err?.response?.data?.error || 'Could not load messages');
+          setMessages([]);
+          setParticipants([]);
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && fetchGeneration === fetchGenerationRef.current) {
           setIsLoading(false);
           setIsRefreshing(false);
         }
@@ -199,6 +249,33 @@ export default function ChatPage() {
       cancelled = true;
     };
   }, [matchId]);
+
+  const refetchAndMergeHistory = useCallback(async () => {
+    const roomId = matchIdRef.current;
+    if (!roomId) return;
+
+    const generation = reconnectGenerationRef.current + 1;
+    reconnectGenerationRef.current = generation;
+
+    setIsRefreshing(true);
+    try {
+      const data = await fetchAndCacheMessages(roomId);
+      if (generation !== reconnectGenerationRef.current) return;
+
+      const { messages: serverMessages, participants: freshParticipants } =
+        applyServerHistory(data);
+      setMessages((prev) => mergeMessageLists(prev, serverMessages));
+      setParticipants(freshParticipants);
+      setLoadError(null);
+    } catch {
+      if (generation !== reconnectGenerationRef.current) return;
+      // Keep current messages if reconnect refetch fails.
+    } finally {
+      if (generation === reconnectGenerationRef.current) {
+        setIsRefreshing(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!isLoading && !accessDenied && socket?.connected && matchId) {
@@ -218,23 +295,36 @@ export default function ChatPage() {
       markRead();
     };
 
-    const onReconnect = () => {
+    const handleSocketBackOnline = () => {
       joinRoom();
+      if (!wasDisconnectedRef.current) return;
+      wasDisconnectedRef.current = false;
+      if (reconnectFetchInflightRef.current) return;
+      reconnectFetchInflightRef.current = true;
+      refetchAndMergeHistory().finally(() => {
+        reconnectFetchInflightRef.current = false;
+      });
+    };
+
+    const onDisconnect = () => {
+      wasDisconnectedRef.current = true;
     };
 
     if (socket.connected) {
       joinRoom();
     }
-    socket.on('connect', joinRoom);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect', handleSocketBackOnline);
     socket.on('chat:joined', onJoined);
-    window.addEventListener('hawalay:socket-reconnected', onReconnect);
+    window.addEventListener('hawalay:socket-reconnected', handleSocketBackOnline);
 
     return () => {
-      socket.off('connect', joinRoom);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect', handleSocketBackOnline);
       socket.off('chat:joined', onJoined);
-      window.removeEventListener('hawalay:socket-reconnected', onReconnect);
+      window.removeEventListener('hawalay:socket-reconnected', handleSocketBackOnline);
     };
-  }, [socket, matchId, accessDenied, markRead]);
+  }, [socket, matchId, accessDenied, markRead, refetchAndMergeHistory]);
 
   const appendMessage = useCallback(
     (incoming) => {

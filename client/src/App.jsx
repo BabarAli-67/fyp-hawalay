@@ -25,23 +25,21 @@ import OfflineExperiencePage from './pages/OfflineExperiencePage.jsx';
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
 function AppShell() {
-  const { user, logout, unreadCount } = useAuth();
+  const { user, logout, unreadCount, chatUnreadCount, fetchChatInbox } = useAuth();
   const location = useLocation();
-  const [chatUnreadCount, setChatUnreadCount] = useState(0);
 
   useEffect(() => {
-    if (location.pathname === '/chats' || location.pathname.startsWith('/chat/')) {
-      setChatUnreadCount(0);
-    }
-  }, [location.pathname]);
+    if (!user) return;
+    fetchChatInbox();
+  }, [location.pathname, user, fetchChatInbox]);
 
-  const handleChatUnreadIncrement = useCallback(() => {
-    setChatUnreadCount((count) => count + 1);
-  }, []);
+  const handleChatUnreadRefresh = useCallback(() => {
+    fetchChatInbox();
+  }, [fetchChatInbox]);
 
   return (
     <>
-      {user ? <ChatNotifyListener onUnreadIncrement={handleChatUnreadIncrement} /> : null}
+      {user ? <ChatNotifyListener onUnreadIncrement={handleChatUnreadRefresh} /> : null}
       <AppLayout
         user={user}
         unreadCount={unreadCount}

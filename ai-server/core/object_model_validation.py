@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.object_class_map import load_category_mapping, load_class_names, normalize_class_name_list
+from core.object_class_map import load_category_mapping, load_class_name_list, load_json_file
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +88,12 @@ def validate_object_model_artifacts(
         )
         return report
 
-    raw_names = _load_raw_json(class_names_path)
+    raw_names = load_json_file(class_names_path)
     if raw_names is None:
         report.errors.append(f"class_names.json is invalid or unreadable: {class_names_path}")
         return report
 
-    class_names = normalize_class_name_list(raw_names)
+    class_names = load_class_name_list(class_names_path)
     if not class_names:
         report.errors.append(f"class_names.json contains no valid classes: {class_names_path}")
         return report
@@ -102,10 +102,10 @@ def validate_object_model_artifacts(
         report.errors.append(f"class_names.json contains duplicate class names: {class_names_path}")
         return report
 
-    id_map = load_class_names(class_names_path)
-    if len(id_map) != len(class_names):
+    id_map_len = len(class_names)
+    if isinstance(raw_names, dict) and len(raw_names) != id_map_len:
         report.warnings.append(
-            f"class_names.json parsed {len(id_map)} id(s) from {len(class_names)} name(s) — "
+            f"class_names.json parsed {id_map_len} id(s) from {len(raw_names)} key(s) — "
             "check numeric keys if using object format",
         )
 
@@ -148,15 +148,3 @@ def validate_object_model_artifacts(
     report.ready = True
     report.class_count = len(class_names)
     return report
-
-
-def _load_raw_json(path: Path | None):
-    if path is None or not path.is_file():
-        return None
-    try:
-        import json
-
-        with path.open(encoding="utf-8-sig") as handle:
-            return json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return None
