@@ -34,6 +34,22 @@ class OcrSuggestedFields(BaseModel):
     suggested_distinctive_features: str | None = None
 
 
+class SensitiveOcrRegion(BaseModel):
+    """Phase 2 — sensitive value with EasyOCR/YOLO bounding boxes (server-side only)."""
+
+    field: str
+    label: str
+    text: str
+    bounding_boxes: list[list[int]] = Field(
+        default_factory=list,
+        alias="boundingBoxes",
+        description="One or more [x1, y1, x2, y2] boxes in image pixel coordinates",
+    )
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    model_config = {"populate_by_name": True}
+
+
 class OcrExtractResponse(BaseModel):
     """
     Primary OCR extract response (production contract).
@@ -61,6 +77,10 @@ class OcrExtractResponse(BaseModel):
     card_number: str | None = None
     cardholder_name: str | None = None
     expiry_date: str | None = None
+    sensitive_regions: list[SensitiveOcrRegion] = Field(
+        default_factory=list,
+        description="Server-side sensitive OCR regions for future masking (Phase 2)",
+    )
 
     model_config = {"extra": "ignore"}
 

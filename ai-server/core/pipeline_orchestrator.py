@@ -30,6 +30,7 @@ from utils.report_caption import (
 )
 from utils.report_features import format_feature_bullets, resolve_feature_points
 from utils.gemini_debug import mask_api_key
+from utils.sensitivity_detection import resolve_image_sensitivity
 from utils.text_builder import build_enriched_text
 
 logger = logging.getLogger(__name__)
@@ -712,6 +713,14 @@ class AnalyzeOrchestrator:
             ocr_payload=ocr_payload,
         )
 
+        is_sensitive, sensitive_document_type = resolve_image_sensitivity(
+            ocr_payload,
+            yolo_threshold=yolo_threshold,
+            caption=vision.get("caption") or "",
+            distinctive_features=vision.get("distinctive_features") or "",
+            ocr_text=vision.get("ocr_text") or structured_ocr_text,
+        )
+
         return {
             "ocr": ocr_payload,
             "object_detection": object_block.model_dump(),
@@ -725,6 +734,8 @@ class AnalyzeOrchestrator:
             "embedding_available": vision["embedding_available"],
             "vision_status": vision.get("vision_status") or "empty",
             "vision_message": vision.get("vision_message") or "",
+            "is_sensitive": is_sensitive,
+            "sensitive_document_type": sensitive_document_type,
         }
 
     async def embed_item_report(

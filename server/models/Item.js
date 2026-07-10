@@ -157,6 +157,27 @@ const itemSchema = new mongoose.Schema(
       suggestedCategory: { type: String },
       suggestedCategorySource: { type: String },
       ocrDocumentType: { type: String },
+      isSensitive: { type: Boolean, default: false },
+      sensitiveDocumentType: {
+        type: String,
+        enum: ['cnic', 'national_id', 'credit_card', 'debit_card'],
+        default: null,
+      },
+      sensitiveRegions: {
+        type: [
+          {
+            field: { type: String, trim: true },
+            label: { type: String, trim: true },
+            text: { type: String, trim: true },
+            boundingBoxes: { type: [[Number]], default: undefined },
+            confidence: { type: Number, min: 0, max: 1 },
+          },
+        ],
+        default: undefined,
+      },
+      imagePrivacyMasked: { type: Boolean, default: false },
+      imageMaskStrategy: { type: String, trim: true },
+      textPrivacyMasked: { type: Boolean, default: false },
       ocrFields: { type: mongoose.Schema.Types.Mixed },
       processedAt: { type: Date },
       processingTimeMs: { type: Number },

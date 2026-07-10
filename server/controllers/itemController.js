@@ -12,6 +12,16 @@ const { resolveSuggestedCategory } = require('../utils/categoryMapping');
 const { resolveCategoryFields, applyResolvedCategoryToItem } = require('../utils/categoryResolution');
 const { resolveItemEmbedding } = require('../utils/itemEmbedding');
 const { buildItemsListFilter } = require('../utils/itemSearch');
+const { stashSensitiveRegions, takeSensitiveRegions } = require('../utils/pendingSensitiveRegions');
+const { stashAnalyzePayload, takeAnalyzePayload } = require('../utils/pendingAnalyzePayload');
+const {
+  extractSensitiveRegions,
+  stripSensitiveRegionsFromAnalyzePayload,
+  stripSensitiveMetadataFromItem,
+} = require('../utils/sensitiveOcrRegions');
+const { protectSensitiveImage } = require('../utils/sensitiveImageMask');
+const { applyPublicTextPrivacy, maskAnalyzePayloadForClient } = require('../utils/sensitiveTextMask');
+const { resolveCreateItemAnalyzeContext } = require('../utils/resolveCreateItemAnalyzeContext');
 
 const CATEGORIES = ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'];
 const REPORT_TYPES = ['lost', 'found'];
@@ -164,6 +174,167 @@ function mapDetectedObjects(aiResponse) {
     .filter(Boolean);
 }
 
+const OCR_SENSITIVE_DOCUMENT_TYPES = new Set([
+  'cnic',
+  'national_id',
+  'id_card',
+  'credit_card',
+  'debit_card',
+]);
+
+function ocrFieldValue(ocr, key) {
+  if (!ocr || typeof ocr !== 'object') return '';
+  const fields = ocr.fields;
+  if (fields && typeof fields === 'object') {
+    const entry = fields[key];
+    if (entry && typeof entry === 'object' && entry.value != null && String(entry.value).trim()) {
+      return String(entry.value).trim();
+    }
+  }
+  const flat = ocr[key];
+  if (flat != null && String(flat).trim()) {
+    return String(flat).trim();
+  }
+  return '';
+}
+
+/**
+ * Mirrors ai-server ``sensitivity_detection._classify_payment_card_type``.
+ * @param {object} ocr
+ */
+function classifyPaymentCardTypeFromOcr(ocr) {
+  const brand = ocrFieldValue(ocr, 'card_brand').toLowerCase();
+  const combined = [
+    brand,
+    ocrFieldValue(ocr, 'card_number'),
+    String(ocr.ocr_text || ocr.ocrText || ''),
+  ]
+    .join(' ')
+    .toLowerCase();
+  return combined.includes('debit') ? 'debit_card' : 'credit_card';
+}
+
+/**
+ * OCR field heuristics aligned with create-time detection
+ * (ai-server ``sensitivity_detection._classify_from_ocr``).
+ * @param {object | null | undefined} ocr
+ * @returns {{ isSensitive: true, sensitiveDocumentType: string } | null}
+ */
+function resolveSensitivityFromOcrFields(ocr) {
+  if (!ocr || typeof ocr !== 'object') {
+    return null;
+  }
+
+  const docType = String(ocr.document_type || ocr.documentType || '')
+    .trim()
+    .toLowerCase();
+
+  if (docType === 'cnic') {
+    return { isSensitive: true, sensitiveDocumentType: 'cnic' };
+  }
+  if (docType === 'national_id' || docType === 'id_card') {
+    return { isSensitive: true, sensitiveDocumentType: 'national_id' };
+  }
+  if (docType === 'debit_card') {
+    return { isSensitive: true, sensitiveDocumentType: 'debit_card' };
+  }
+  if (docType === 'credit_card' || OCR_SENSITIVE_DOCUMENT_TYPES.has(docType)) {
+    return { isSensitive: true, sensitiveDocumentType: classifyPaymentCardTypeFromOcr(ocr) };
+  }
+
+  if (ocrFieldValue(ocr, 'card_number') || ocrFieldValue(ocr, 'expiry_date')) {
+    return { isSensitive: true, sensitiveDocumentType: classifyPaymentCardTypeFromOcr(ocr) };
+  }
+
+  return null;
+}
+
+/**
+ * @param {object} payload
+ * @param {{ isSensitive: boolean, sensitiveDocumentType: string | null }} sensitivity
+ */
+function applyResolvedSensitivityToAnalyzePayload(payload, sensitivity) {
+  return {
+    ...payload,
+    is_sensitive: sensitivity.isSensitive,
+    isSensitive: sensitivity.isSensitive,
+    sensitive_document_type: sensitivity.sensitiveDocumentType,
+    sensitiveDocumentType: sensitivity.sensitiveDocumentType,
+  };
+}
+
+function resolveIsSensitiveFromAnalyze(aiResponse) {
+  if (!aiResponse || typeof aiResponse !== 'object') {
+    return { isSensitive: false, sensitiveDocumentType: null };
+  }
+
+  if (aiResponse.is_sensitive === true || aiResponse.isSensitive === true) {
+    return {
+      isSensitive: true,
+      sensitiveDocumentType:
+        aiResponse.sensitive_document_type || aiResponse.sensitiveDocumentType || null,
+    };
+  }
+
+  const ocrSensitivity = resolveSensitivityFromOcrFields(aiResponse.ocr);
+  if (ocrSensitivity) {
+    return ocrSensitivity;
+  }
+
+  if (aiResponse.is_sensitive === false || aiResponse.isSensitive === false) {
+    return { isSensitive: false, sensitiveDocumentType: null };
+  }
+
+  return { isSensitive: false, sensitiveDocumentType: null };
+}
+
+/**
+ * Build analyze-image JSON for the client: mask sensitive OCR text when needed.
+ * @param {object} payload Unmasked FastAPI analyze response (+ optional Express fields)
+ * @param {{ sensitiveRegions?: Array<object> }} [context]
+ */
+function prepareAnalyzeResponseForClient(payload, context = {}) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  const sensitivity = resolveIsSensitiveFromAnalyze(payload);
+  let next = applyResolvedSensitivityToAnalyzePayload(payload, sensitivity);
+
+  if (sensitivity.isSensitive) {
+    next = maskAnalyzePayloadForClient(next, {
+      sensitiveRegions: context.sensitiveRegions || extractSensitiveRegions(payload),
+    });
+  }
+
+  return stripSensitiveRegionsFromAnalyzePayload(next);
+}
+
+/**
+ * Prefer unmasked analyze values for embedding when sensitive content was masked for the client.
+ * @param {import('express').Request['body']} body
+ * @param {object | null} unmaskedAnalyze
+ * @param {boolean} isSensitive
+ */
+function resolveEmbeddingBody(body, unmaskedAnalyze, isSensitive) {
+  if (!isSensitive || !unmaskedAnalyze || typeof unmaskedAnalyze !== 'object') {
+    return body;
+  }
+
+  const next = { ...body };
+  const rawOcr = unmaskedAnalyze.ocr_text || unmaskedAnalyze.ocrText;
+  if (rawOcr && String(rawOcr).trim()) {
+    next.ocrText = String(rawOcr).trim();
+  }
+  if (unmaskedAnalyze.caption && String(unmaskedAnalyze.caption).trim()) {
+    next.caption = String(unmaskedAnalyze.caption).trim();
+  }
+  const rawFeatures =
+    unmaskedAnalyze.distinctive_features || unmaskedAnalyze.distinctiveFeatures;
+  if (rawFeatures && String(rawFeatures).trim() && body.distinctiveFeatures) {
+    next.distinctiveFeatures = String(rawFeatures).trim();
+  }
+  return next;
+}
+
 function buildAiMetadata(aiResponse, { embeddingVector, embeddingModel, embeddingResolved } = {}) {
   const hasValidVector =
     embeddingResolved === true ||
@@ -228,6 +399,17 @@ function buildAiMetadata(aiResponse, { embeddingVector, embeddingModel, embeddin
     if (suggestion.documentType) {
       metadata.ocrDocumentType = suggestion.documentType;
     }
+  }
+
+  const sensitivity = resolveIsSensitiveFromAnalyze(aiResponse);
+  metadata.isSensitive = sensitivity.isSensitive;
+  if (sensitivity.sensitiveDocumentType) {
+    metadata.sensitiveDocumentType = sensitivity.sensitiveDocumentType;
+  }
+
+  const sensitiveRegions = extractSensitiveRegions(aiResponse);
+  if (sensitiveRegions.length > 0) {
+    metadata.sensitiveRegions = sensitiveRegions;
   }
 
   return metadata;
@@ -296,7 +478,7 @@ async function extractOcr(req, res, next) {
     const data = await postMultipart('/api/v1/ocr/extract', formData, {
       timeout: OCR_TIMEOUT_MS,
     });
-    return res.status(200).json(data);
+    return res.status(200).json(stripSensitiveRegionsFromAnalyzePayload(data));
   } catch (err) {
     const mapped = mapAiServiceError(err);
     if (mapped.status === 503) {
@@ -347,26 +529,42 @@ async function analyzeImage(req, res, next) {
       description: req.body?.description || '',
     });
     const data = await callAnalyzeImage(formData);
-    const visionStatus = data?.vision_status || data?.visionStatus || 'unknown';
-    const captionWords = (data?.caption || '').trim().split(/\s+/).filter(Boolean).length;
-    const detectedObjects = mapDetectedObjects(data);
+    const sensitivity = resolveIsSensitiveFromAnalyze(data);
+    const normalizedData = applyResolvedSensitivityToAnalyzePayload(data, sensitivity);
+    const sensitiveRegions = extractSensitiveRegions(normalizedData);
+    if (sensitiveRegions.length > 0) {
+      stashSensitiveRegions(req.user.userId, sensitiveRegions);
+    }
+    if (sensitivity.isSensitive) {
+      stashAnalyzePayload(req.user.userId, normalizedData);
+    }
+    const visionStatus = normalizedData?.vision_status || normalizedData?.visionStatus || 'unknown';
+    const captionWords = (normalizedData?.caption || '').trim().split(/\s+/).filter(Boolean).length;
+    const detectedObjects = mapDetectedObjects(normalizedData);
     const suggestion = resolveSuggestedCategory({
       detectedObjects,
-      analyzePayload: data,
-      ocr: data?.ocr,
+      analyzePayload: normalizedData,
+      ocr: normalizedData?.ocr,
     });
     console.info(
       `[analyzeImage] vision_status=${visionStatus} caption_words=${captionWords} ` +
-        `ocr_success=${Boolean(data?.ocr?.success)} suggested_category=${suggestion?.category || 'none'} ` +
-        `source=${suggestion?.source || 'none'} message=${JSON.stringify(data?.vision_message || '')}`,
+        `ocr_success=${Boolean(normalizedData?.ocr?.success)} sensitive=${sensitivity.isSensitive} ` +
+        `sensitive_type=${sensitivity.sensitiveDocumentType || 'none'} ` +
+        `suggested_category=${suggestion?.category || 'none'} ` +
+        `source=${suggestion?.source || 'none'} message=${JSON.stringify(normalizedData?.vision_message || '')}`,
     );
-    return res.status(200).json({
-      ...data,
-      suggestedCategory: suggestion?.category ?? null,
-      suggestedCategorySource: suggestion?.source ?? null,
-      suggestedCategoryHint: suggestion?.label ?? null,
-      ocrDocumentType: suggestion?.documentType ?? data?.ocr?.document_type ?? null,
-    });
+    return res.status(200).json(
+      prepareAnalyzeResponseForClient(
+        {
+          ...normalizedData,
+          suggestedCategory: suggestion?.category ?? null,
+          suggestedCategorySource: suggestion?.source ?? null,
+          suggestedCategoryHint: suggestion?.label ?? null,
+          ocrDocumentType: suggestion?.documentType ?? normalizedData?.ocr?.document_type ?? null,
+        },
+        { sensitiveRegions },
+      ),
+    );
   } catch (err) {
     const mapped = mapAiServiceError(err);
     if (mapped.status === 503) {
@@ -390,16 +588,62 @@ async function createItem(req, res, next) {
     let imageFileId = req.body.imageFileId || null;
     const colors = parseColors(req.body.colors);
 
+    const clientEmbedding = parseEmbeddingVector(req.body.embeddingVector);
+    const stashedAnalyze = takeAnalyzePayload(req.user.userId);
+    const clientAnalyze = parseAnalyzeResult(req);
+    const stashedRegions = takeSensitiveRegions(req.user.userId);
+
+    const analyzeContext = await resolveCreateItemAnalyzeContext(req, {
+      stashedAnalyze,
+      clientAnalyze,
+      stashedRegions,
+      buildImageFormData,
+      resolveIsSensitiveFromAnalyze,
+    });
+
+    const aiResponse = analyzeContext.aiResponse;
+    const sensitiveRegions = analyzeContext.sensitiveRegions;
+    const sensitivity = resolveIsSensitiveFromAnalyze(aiResponse);
+    const unmaskedAnalyzeForEmbed =
+      stashedAnalyze || (analyzeContext.analyzedOnCreate ? aiResponse : null);
+
+    if (sensitivity.isSensitive && !req.file && req.body.imageFileId) {
+      return res.status(400).json({
+        error:
+          'Sensitive document reports require a new photo upload so privacy masking can be applied.',
+      });
+    }
+
     if (req.file) {
+      let uploadBuffer = req.file.buffer;
+      let imagePrivacyMasked = false;
+
+      if (sensitivity.isSensitive) {
+        const protectedImage = await protectSensitiveImage(req.file.buffer, {
+          sensitiveRegions,
+          analyzePayload: aiResponse,
+          mimeType: req.file.mimetype,
+        });
+        uploadBuffer = protectedImage.buffer;
+        imagePrivacyMasked = protectedImage.imagePrivacyMasked;
+        console.info(
+          '[item] privacy mask applied user=%s strategy=%s regions=%d',
+          req.user.userId,
+          protectedImage.strategy,
+          sensitiveRegions.length,
+        );
+        req._imageMaskStrategy = protectedImage.strategy;
+      }
+
       imageFileId = await uploadToGridFS(
-        req.file.buffer,
+        uploadBuffer,
         req.file.originalname || 'image.jpg',
         req.file.mimetype,
       );
+
+      req._imagePrivacyMasked = imagePrivacyMasked;
     }
 
-    const clientEmbedding = parseEmbeddingVector(req.body.embeddingVector);
-    const aiResponse = parseAnalyzeResult(req);
     const detectedObjects = mapDetectedObjects(aiResponse);
 
     const userCategoryInput = req.body.userCategory?.trim() || req.body.category;
@@ -427,7 +671,11 @@ async function createItem(req, res, next) {
 
     const { vector: embeddingVector, available: embeddingResolved, model: embeddingModel } =
       await resolveItemEmbedding({
-        body: { ...req.body, category: categoryFields.effectiveCategory },
+        body: resolveEmbeddingBody(
+          { ...req.body, category: categoryFields.effectiveCategory },
+          unmaskedAnalyzeForEmbed,
+          sensitivity.isSensitive,
+        ),
         file: req.file,
         aiResponse,
         clientVector: clientEmbedding,
@@ -439,6 +687,15 @@ async function createItem(req, res, next) {
       embeddingModel,
       embeddingResolved,
     });
+    if (sensitiveRegions.length && !aiMetadata.sensitiveRegions?.length) {
+      aiMetadata.sensitiveRegions = sensitiveRegions;
+    }
+    if (req._imagePrivacyMasked) {
+      aiMetadata.imagePrivacyMasked = true;
+    }
+    if (req._imageMaskStrategy) {
+      aiMetadata.imageMaskStrategy = req._imageMaskStrategy;
+    }
     const embeddingAvailable = embeddingResolved === true;
 
     const secondaryLocationName =
@@ -483,7 +740,15 @@ async function createItem(req, res, next) {
       if (secondaryLocationName) itemPayload.secondaryLocationName = secondaryLocationName;
     }
 
-    const item = await Item.create(itemPayload);
+    const privacyApplied = applyPublicTextPrivacy(itemPayload, aiMetadata, {
+      isSensitive: sensitivity.isSensitive,
+      sensitiveRegions,
+    });
+    const securedItemPayload = privacyApplied.itemPayload;
+    const securedAiMetadata = privacyApplied.aiMetadata;
+    securedItemPayload.aiMetadata = securedAiMetadata;
+
+    const item = await Item.create(securedItemPayload);
 
     res.status(201).json({ itemId: item._id });
 
@@ -514,7 +779,7 @@ async function getItems(req, res, next) {
     const totalPages = Math.ceil(total / limit) || 1;
 
     return res.status(200).json({
-      items: items.map((row) => applyResolvedCategoryToItem(row)),
+      items: items.map((row) => stripSensitiveMetadataFromItem(applyResolvedCategoryToItem(row))),
       total,
       page,
       totalPages,
@@ -535,7 +800,7 @@ async function getItemById(req, res, next) {
       return res.status(404).json({ error: 'Item not found' });
     }
 
-    return res.status(200).json(applyResolvedCategoryToItem(item));
+    return res.status(200).json(stripSensitiveMetadataFromItem(applyResolvedCategoryToItem(item)));
   } catch (err) {
     return next(err);
   }

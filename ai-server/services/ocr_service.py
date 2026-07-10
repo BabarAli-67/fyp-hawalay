@@ -22,12 +22,14 @@ from PIL import Image
 from core.yolo_detector import YoloDetector
 from schemas.ocr import OcrExtractResponse
 from utils.image_utils import (
+    crop_bounds_with_padding,
     crop_with_padding,
     decode_image,
     pil_to_bgr_numpy,
     resize_image,
     validate_image_upload,
 )
+from utils.ocr_bbox import readtext_boxes_to_image_space
 from utils.ocr_preprocessing import preprocess_for_easyocr, preprocess_full_image_for_ocr
 from utils.ocr_response_builder import build_ocr_response, response_to_dict
 from utils.ocr_text_cleaning import OCR_FIELD_CLASSES, clean_text
@@ -189,7 +191,7 @@ class OcrService:
 
         for class_name in _SKIP_OCR_CLASSES:
             if class_name in best_by_class:
-                ocr_by_class[class_name] = {"text": None, "ocr_confidence": None}
+                ocr_by_class[class_name] = {"text": None, "ocr_confidence": None, "text_boxes": []}
 
         detections_map = merge_detection_results(list(best_by_class.values()), ocr_by_class)
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -220,16 +222,32 @@ class OcrService:
         logger.info("[ocr] OCR jobs=%d (one per class max)", len(ocr_jobs))
 
         for class_name, det in ocr_jobs:
-            crop = crop_with_padding(image_bgr, det["bbox"])
-            ocr_by_class[class_name] = self._ocr_on_crop(crop, class_name)
+            crop_x1, crop_y1, crop_x2, crop_y2 = crop_bounds_with_padding(
+                det["bbox"],
+                image_bgr.shape,
+            )
+            crop = image_bgr[crop_y1:crop_y2, crop_x1:crop_x2]
+            ocr_by_class[class_name] = self._ocr_on_crop(
+                crop,
+                class_name,
+                crop_origin=(crop_x1, crop_y1),
+            )
 
         return ocr_by_class
+
+    def _full_image_text_boxes(self, pil_image: Image.Image) -> list[dict[str, Any]]:
+        """EasyOCR detail=1 on full image for degraded sensitive-region extraction."""
+        bgr = pil_to_bgr_numpy(pil_image)
+        processed = preprocess_full_image_for_ocr(bgr)
+        results = self._readtext_on_crop(processed, "full_image", detail=1)
+        return readtext_boxes_to_image_space(results, offset_x=0, offset_y=0)
 
     def _extract_degraded(self, pil_image: Image.Image, document_type: str) -> OcrExtractResponse:
         started = time.perf_counter()
         logger.warning("[ocr] YOLO unavailable — degraded full-image path")
 
         supporting_text = extract_text(pil_image, self._reader)
+        full_image_boxes = self._full_image_text_boxes(pil_image)
         elapsed_ms = (time.perf_counter() - started) * 1000
 
         return build_ocr_response(
@@ -244,6 +262,7 @@ class OcrService:
             yolo_available=False,
             detection_count=0,
             degraded_ocr_text=supporting_text or None,
+            full_image_text_boxes=full_image_boxes,
         )
 
     def _full_image_fallback(
@@ -259,6 +278,7 @@ class OcrService:
     ) -> OcrExtractResponse:
         """Graceful fallback when YOLO finds no boxes."""
         supporting_text = extract_text(pil_image, self._reader)
+        full_image_boxes = self._full_image_text_boxes(pil_image)
         elapsed_ms = (time.perf_counter() - started) * 1000
         return build_ocr_response(
             status=status,
@@ -269,6 +289,7 @@ class OcrService:
             yolo_available=yolo_available,
             detection_count=detection_count,
             degraded_ocr_text=supporting_text or None,
+            full_image_text_boxes=full_image_boxes,
         )
 
     def _readtext_on_crop(self, processed: np.ndarray, class_name: str, *, detail: int) -> list:
@@ -279,25 +300,44 @@ class OcrService:
             logger.warning("[ocr] EasyOCR failed class=%s: %s", class_name, exc)
             return []
 
-    def _ocr_on_crop(self, crop_bgr: np.ndarray, class_name: str) -> dict[str, Any]:
+    def _ocr_on_crop(
+        self,
+        crop_bgr: np.ndarray,
+        class_name: str,
+        *,
+        crop_origin: tuple[int, int] = (0, 0),
+    ) -> dict[str, Any]:
         if crop_bgr.size == 0:
             logger.warning("[ocr] invalid empty crop class=%s", class_name)
-            return {"text": "", "ocr_confidence": 0.0}
+            return {"text": "", "ocr_confidence": 0.0, "text_boxes": []}
 
         processed = preprocess_for_easyocr(crop_bgr)
         results = self._readtext_on_crop(processed, class_name, detail=1)
         if not results:
             logger.debug("[ocr] no text class=%s", class_name)
-            return {"text": "", "ocr_confidence": 0.0}
+            return {"text": "", "ocr_confidence": 0.0, "text_boxes": []}
 
-        full_text = " ".join(r[1] for r in results)
-        avg_confidence = sum(r[2] for r in results) / len(results)
+        offset_x, offset_y = crop_origin
+        text_boxes = readtext_boxes_to_image_space(
+            results,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+        full_text = " ".join(box["text"] for box in text_boxes)
+        avg_confidence = (
+            sum(box["confidence"] for box in text_boxes) / len(text_boxes) if text_boxes else 0.0
+        )
         cleaned = clean_text(full_text, class_name)
 
         logger.info(
-            "[ocr] extracted class=%s value=%r ocr_conf=%.3f",
+            "[ocr] extracted class=%s value=%r ocr_conf=%.3f boxes=%d",
             class_name,
             cleaned[:40] if cleaned else "",
             avg_confidence,
+            len(text_boxes),
         )
-        return {"text": cleaned, "ocr_confidence": round(avg_confidence, 3)}
+        return {
+            "text": cleaned,
+            "ocr_confidence": round(avg_confidence, 3),
+            "text_boxes": text_boxes,
+        }

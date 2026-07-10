@@ -20,6 +20,7 @@ def merge_detection_results(
             "detection_confidence": round(float(det["confidence"]), 3),
             "ocr_confidence": ocr_by_class.get(class_name, {}).get("ocr_confidence"),
             "bbox": det["bbox"],
+            "text_boxes": ocr_by_class.get(class_name, {}).get("text_boxes") or [],
         }
         existing = output.get(class_name)
         if existing is None or entry["detection_confidence"] > existing["detection_confidence"]:

@@ -34,6 +34,18 @@ const EXTENDED_KNOWN_BRANDS = [
   'Adidas',
 ];
 
+/** Payment networks only — used for card uploads (never consumer brands like Apple). */
+const PAYMENT_CARD_BRAND_RULES = [
+  { pattern: /\bamerican\s+express\b/i, brand: 'American Express' },
+  { pattern: /\bmaster\s*card\b/i, brand: 'Mastercard' },
+  { pattern: /\bdiners\s+club\b/i, brand: 'Diners Club' },
+  { pattern: /\bunion\s*pay\b/i, brand: 'UnionPay' },
+  { pattern: /\bunionpay\b/i, brand: 'UnionPay' },
+  { pattern: /\bdiscover\b/i, brand: 'Discover' },
+  { pattern: /\bvisa\b/i, brand: 'Visa' },
+  { pattern: /\bamex\b/i, brand: 'American Express' },
+];
+
 /** Longest match first — e.g. "Habib Bank Limited" before "HBL". */
 const KNOWN_BRANDS = [...new Set([...BRAND_SUGGESTIONS, ...EXTENDED_KNOWN_BRANDS])].sort(
   (a, b) => b.length - a.length,
@@ -173,6 +185,93 @@ function isKnownBrandName(value) {
   return KNOWN_BRANDS.some((brand) => brand.toLowerCase() === text.toLowerCase());
 }
 
+/**
+ * True when analyze signals a credit/debit card (not CNIC / national ID).
+ * @param {object} analyze
+ */
+function isPaymentCardAnalyze(analyze) {
+  if (!analyze) return false;
+
+  const raw = analyze.raw || {};
+  const sensitiveType = String(
+    raw.sensitive_document_type || raw.sensitiveDocumentType || '',
+  ).toLowerCase();
+  if (sensitiveType === 'cnic' || sensitiveType === 'national_id') {
+    return false;
+  }
+  if (sensitiveType === 'credit_card' || sensitiveType === 'debit_card') {
+    return true;
+  }
+
+  const docType = String(
+    analyze.ocr?.documentType || raw.ocr?.document_type || analyze.ocrDocumentType || '',
+  ).toLowerCase();
+  if (docType === 'credit_card' || docType === 'debit_card') {
+    return true;
+  }
+
+  const rows = getExtractionRows(analyze);
+  return rows.some(
+    (row) => (row.key === 'card_number' || row.key === 'expiry_date') && row.value,
+  );
+}
+
+/**
+ * Detect Visa / Mastercard / Amex / UnionPay etc. in OCR or caption text.
+ * @param {string} text
+ * @returns {string | null}
+ */
+function detectPaymentCardBrandInText(text) {
+  const haystack = String(text || '');
+  if (!haystack.trim()) return null;
+
+  for (const { pattern, brand } of PAYMENT_CARD_BRAND_RULES) {
+    if (pattern.test(haystack)) {
+      return brand;
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {string | null | undefined} value
+ * @returns {string | null}
+ */
+function canonicalizePaymentCardBrand(value) {
+  const text = normalizeBrandText(value);
+  if (!text) return null;
+  return detectPaymentCardBrandInText(text);
+}
+
+/**
+ * Brand autofill for payment cards — OCR card_brand + network names only.
+ * @param {object} analyze
+ * @returns {string | null}
+ */
+function pickPaymentCardBrand(analyze) {
+  const ocrBrand = analyze?.ocr?.fields?.cardBrand?.value;
+  const fromOcrField = canonicalizePaymentCardBrand(ocrBrand);
+  if (fromOcrField) return fromOcrField;
+
+  const cardBrandRow = getExtractionRows(analyze).find(
+    (row) => row.key === 'card_brand' && row.value,
+  );
+  const fromRow = canonicalizePaymentCardBrand(cardBrandRow?.value);
+  if (fromRow) return fromRow;
+
+  const sourceText = [
+    ocrBrand,
+    cardBrandRow?.value,
+    analyze?.ocr?.ocrText,
+    analyze?.caption,
+    ...(analyze.featurePoints || []),
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return detectPaymentCardBrandInText(sourceText);
+}
+
 export function humanizeKey(key) {
   return String(key || '')
     .replace(/_/g, ' ')
@@ -246,6 +345,10 @@ export function getExtractionRows(analyze) {
  */
 export function pickBrandFromAnalyze(analyze) {
   if (!analyze) return null;
+
+  if (isPaymentCardAnalyze(analyze)) {
+    return pickPaymentCardBrand(analyze);
+  }
 
   return (
     pickExplicitBrandFromAnalyze(analyze) ||

@@ -137,6 +137,22 @@ def pil_to_bgr_numpy(image: Image.Image) -> np.ndarray:
         return rgb[:, :, ::-1].copy()
 
 
+def crop_bounds_with_padding(
+    bbox: list[int],
+    image_shape: tuple[int, ...],
+    *,
+    pad: int = 5,
+) -> tuple[int, int, int, int]:
+    """Return ``(crop_x1, crop_y1, crop_x2, crop_y2)`` with padding clamped to image bounds."""
+    x1, y1, x2, y2 = bbox
+    h, w = image_shape[:2]
+    crop_x1 = max(0, x1 - pad)
+    crop_y1 = max(0, y1 - pad)
+    crop_x2 = min(w, x2 + pad)
+    crop_y2 = min(h, y2 + pad)
+    return crop_x1, crop_y1, crop_x2, crop_y2
+
+
 def crop_with_padding(
     image_bgr: np.ndarray,
     bbox: list[int],
@@ -154,12 +170,11 @@ def crop_with_padding(
     Returns:
         Cropped BGR numpy array.
     """
-    x1, y1, x2, y2 = bbox
-    h, w = image_bgr.shape[:2]
-    crop_x1 = max(0, x1 - pad)
-    crop_y1 = max(0, y1 - pad)
-    crop_x2 = min(w, x2 + pad)
-    crop_y2 = min(h, y2 + pad)
+    crop_x1, crop_y1, crop_x2, crop_y2 = crop_bounds_with_padding(
+        bbox,
+        image_bgr.shape,
+        pad=pad,
+    )
     return image_bgr[crop_y1:crop_y2, crop_x1:crop_x2]
 
 

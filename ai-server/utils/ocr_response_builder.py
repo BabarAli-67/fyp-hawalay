@@ -8,9 +8,14 @@ from schemas.ocr import (
     OcrDetectionItem,
     OcrExtractResponse,
     OcrSuggestedFields,
+    SensitiveOcrRegion,
     build_fields_model,
 )
 from utils.ocr_text_cleaning import compute_overall_confidence
+from utils.sensitive_regions import (
+    build_sensitive_regions_from_detections,
+    build_sensitive_regions_from_full_image_boxes,
+)
 from utils.text_builder import (
     build_ocr_text_summary,
     build_suggested_fields,
@@ -29,6 +34,7 @@ def build_ocr_response(
     yolo_available: bool = True,
     detection_count: int = 0,
     degraded_ocr_text: str | None = None,
+    full_image_text_boxes: list[dict[str, Any]] | None = None,
 ) -> OcrExtractResponse:
     """
     Convert internal detection map → typed ``OcrExtractResponse``.
@@ -59,6 +65,17 @@ def build_ocr_response(
         status in ("degraded", "no_regions") and bool(ocr_text or any(f.value for f in fields.values()))
     )
 
+    if detections_map:
+        sensitive_raw = build_sensitive_regions_from_detections(
+            detections_map,
+            document_type=resolved_type,
+        )
+    else:
+        sensitive_raw = build_sensitive_regions_from_full_image_boxes(
+            full_image_text_boxes or [],
+            document_type=resolved_type,
+        )
+
     return OcrExtractResponse(
         success=success,
         status=status,
@@ -76,6 +93,7 @@ def build_ocr_response(
         card_number=fields.get("card_number").value if fields.get("card_number") else None,
         cardholder_name=fields.get("cardholder_name").value if fields.get("cardholder_name") else None,
         expiry_date=fields.get("expiry_date").value if fields.get("expiry_date") else None,
+        sensitive_regions=[SensitiveOcrRegion.model_validate(item) for item in sensitive_raw],
     )
 
 
@@ -91,4 +109,10 @@ def _item_combined_confidence(item: dict[str, Any]) -> float:
 
 def response_to_dict(response: OcrExtractResponse) -> dict[str, Any]:
     """JSON-serializable dict for FastAPI (includes nested models)."""
-    return response.model_dump(mode="json")
+    data = response.model_dump(mode="json")
+    if data.get("sensitive_regions"):
+        data["sensitive_regions"] = [
+            SensitiveOcrRegion.model_validate(region).model_dump(mode="json", by_alias=True)
+            for region in data["sensitive_regions"]
+        ]
+    return data

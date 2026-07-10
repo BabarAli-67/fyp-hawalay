@@ -59,5 +59,13 @@ class AnalyzeImageResponse(BaseModel):
         default="",
         description="User-facing hint when vision is degraded (quota, fallback, etc.)",
     )
+    is_sensitive: bool = Field(
+        default=False,
+        description="True when image appears to contain CNIC, national ID, or payment card",
+    )
+    sensitive_document_type: str | None = Field(
+        default=None,
+        description="Phase 1 label: cnic | national_id | credit_card | debit_card",
+    )
     processing_time_ms: float = Field(default=0.0, ge=0.0)
     models: AnalyzeModelsInfo = Field(default_factory=AnalyzeModelsInfo)

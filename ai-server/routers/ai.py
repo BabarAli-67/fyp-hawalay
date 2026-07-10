@@ -215,6 +215,8 @@ async def analyze_image(
         embedding_available=pipeline["embedding_available"],
         vision_status=pipeline.get("vision_status") or "empty",
         vision_message=pipeline.get("vision_message") or "",
+        is_sensitive=bool(pipeline.get("is_sensitive")),
+        sensitive_document_type=pipeline.get("sensitive_document_type"),
         processing_time_ms=elapsed_ms,
         models=AnalyzeModelsInfo.model_validate(
             orch.build_models_info(embedding_dimension=embedding_dimension)

@@ -5,7 +5,7 @@
 # --- Dependencies ---
 node_modules/
 **/node_modules/
-
+.verify-sensitive-tmp/
 # --- Environment & secrets (never commit) ---
 .env
 .env.*
