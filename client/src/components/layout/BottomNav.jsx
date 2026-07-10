@@ -107,6 +107,7 @@ export function shouldShowBottomNav(pathname, user) {
     pathname === '/chats' ||
     pathname.startsWith('/chat/') ||
     pathname.startsWith('/matches') ||
+    pathname === '/my-matches' ||
     pathname === '/offline'
   );
 }

@@ -99,6 +99,7 @@ async function persistMatchAndNotify(sourceItem, matchPayload) {
     matchId: matchDoc._id.toString(),
     sourceItemId: sourceItem._id.toString(),
     matchedItemId,
+    itemId: sourceItem._id.toString(),
     score,
     title: matchedItem.title,
   });
@@ -108,6 +109,7 @@ async function persistMatchAndNotify(sourceItem, matchPayload) {
       matchId: matchDoc._id.toString(),
       sourceItemId: sourceItem._id.toString(),
       matchedItemId,
+      itemId: matchedItemId,
       score,
       title: sourceItem.title,
     });

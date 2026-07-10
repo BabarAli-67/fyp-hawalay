@@ -27,7 +27,7 @@ function scoreIcon(score) {
 /**
  * ai_match_results.html — match article (image, score pill, meta, actions).
  */
-export function MatchCard({ match }) {
+export function MatchCard({ match, distanceLabel = '' }) {
   const pct = Math.round(match.similarityScore * 100);
   const img = match.imageUrl ?? DEFAULT_IMG;
   const borderAccent = match.similarityScore >= 0.85 ? 'border-t-2 border-primary' : '';
@@ -63,16 +63,21 @@ export function MatchCard({ match }) {
         </div>
       </div>
       <div className="p-md">
-        <div className="flex justify-between items-start mb-sm">
-          <div>
-            <h3 className="font-h3 text-h3 text-on-surface">{match.title}</h3>
-            <p className="font-caption text-on-surface-variant mt-1">{match.category}</p>
-            <p className="font-caption text-on-surface-variant flex items-center gap-xs mt-1">
-              <span className="material-symbols-outlined text-[16px]">location_on</span>
-              {match.locationName}
+        <div className="flex justify-between items-start gap-sm mb-sm">
+          <div className="min-w-0 flex-1">
+            <h3 className="font-h3 text-h3 text-on-surface line-clamp-2">{match.title}</h3>
+            <p className="font-caption text-on-surface-variant mt-1 truncate">{match.category}</p>
+            <p className="font-caption text-on-surface-variant flex items-center gap-xs mt-1 min-w-0">
+              <span className="material-symbols-outlined text-[16px] shrink-0">location_on</span>
+              <span className="truncate" title={match.locationName}>
+                {match.locationName}
+              </span>
             </p>
+            {distanceLabel ? (
+              <p className="font-caption text-primary mt-1">{distanceLabel}</p>
+            ) : null}
           </div>
-          <p className="font-caption text-primary font-bold shrink-0 ml-sm">{match.date}</p>
+          <p className="font-caption text-primary font-bold shrink-0">{match.date}</p>
         </div>
         <div className="flex gap-sm mt-md">
           <Link

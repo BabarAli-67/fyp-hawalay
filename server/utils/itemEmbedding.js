@@ -12,7 +12,7 @@
  * Embedding lifecycle:
  * (1) Created by FastAPI: preview at POST /ai/analyze-image (run_vision) and again at POST /ai/embed-item on submit.
  * (2) Built from final report text (build_enriched_text: category, title, description, caption, OCR, features, brand, colors) plus optional image bytes.
- * (3) Client stores preview in ReportPage state (embeddingVector) and analyzeSnapshot.raw.embedding_vector after analyze.
+ * (3) Client stores preview in ReportItemPage state (embeddingVector) and analyzeSnapshot.raw.embedding_vector after analyze.
  * (4) Client sends preview on create as multipart field embeddingVector (JSON string) with POST /api/items.
  * (5) Express always calls /ai/embed-item first here; uses that vector if embedding_available, else falls back to client embeddingVector.
  */

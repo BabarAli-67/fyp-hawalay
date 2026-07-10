@@ -30,6 +30,26 @@ const matchSchema = new mongoose.Schema(
       min: 0,
       max: 1,
     },
+    finderConfirmedReturn: {
+      type: Boolean,
+      default: false,
+    },
+    finderConfirmedAt: {
+      type: Date,
+      default: null,
+    },
+    ownerConfirmedReceive: {
+      type: Boolean,
+      default: false,
+    },
+    ownerConfirmedAt: {
+      type: Date,
+      default: null,
+    },
+    returnCompletedAt: {
+      type: Date,
+      default: null,
+    },
     notifiedAt: {
       type: Date,
       default: null,

@@ -8,7 +8,7 @@ const CACHE_NAME = 'hawalay-v2';
 const STATIC_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg'];
 
 const DB_NAME = 'lostfound-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'offline_queue';
 
 const SYNC_TAG = 'sync-lost-found-items';
@@ -83,6 +83,9 @@ function openIndexedDB() {
       const db = event.target.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: false });
+      }
+      if (!db.objectStoreNames.contains('report_drafts')) {
+        db.createObjectStore('report_drafts', { keyPath: 'userId' });
       }
     };
   });

@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { Logo } from '../Logo.jsx';
 import { UserAvatar } from '../UserAvatar.jsx';
 import { InstallAppButton } from '../pwa/InstallAppButton.jsx';
+import { ThemeToggle } from '../ui/ThemeToggle.jsx';
 
 /**
  * dashboard.html — Top App Bar
@@ -62,6 +63,7 @@ export function Navbar({ user, unreadCount = 0, chatUnreadCount = 0, onLogout })
             <h1 className={BRAND_TITLE}>Hawalay</h1>
           </Link>
           <div className={ACTIONS_WRAP}>
+            <ThemeToggle />
             <InstallAppButton className="!h-9 !w-9 sm:!h-10 sm:!w-10" />
             <Link
               to="/login"
@@ -90,6 +92,7 @@ export function Navbar({ user, unreadCount = 0, chatUnreadCount = 0, onLogout })
             </Link>
           </div>
           <div className={ACTIONS_WRAP}>
+            <ThemeToggle />
             <InstallAppButton className="!h-9 !w-9 sm:!h-10 sm:!w-10" />
             <Link
               to="/chats"

@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { useOfflineQueue } from '../../hooks/useOfflineQueue.js';
+import { LogoutConfirmModal } from '../profile/LogoutConfirmModal.jsx';
 import { STITCH_TOAST_CLASSNAME } from '../ui/Toast.jsx';
 import { OfflineBanner } from '../ui/OfflineBanner.jsx';
 import { BottomNav, BOTTOM_NAV_CLEARANCE_CLASS, shouldShowBottomNav } from './BottomNav.jsx';
@@ -18,12 +20,31 @@ export function AppLayout({ user, unreadCount = 0, chatUnreadCount = 0, onLogout
   const { isOnline } = useOfflineQueue();
   const { pathname } = useLocation();
   const showBottomNav = shouldShowBottomNav(pathname, user);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+
+  function handleLogoutRequest() {
+    setLogoutConfirmOpen(true);
+  }
+
+  function handleLogoutCancel() {
+    setLogoutConfirmOpen(false);
+  }
+
+  function handleLogoutConfirm() {
+    setLogoutConfirmOpen(false);
+    onLogout?.();
+  }
 
   return (
     <>
       <ScrollToTop />
       <InstallInstructionsModal />
-      <Navbar user={user} unreadCount={unreadCount} chatUnreadCount={chatUnreadCount} onLogout={onLogout} />
+      <Navbar
+        user={user}
+        unreadCount={unreadCount}
+        chatUnreadCount={chatUnreadCount}
+        onLogout={handleLogoutRequest}
+      />
       <ToastContainer
         position="top-center"
         autoClose={5000}
@@ -31,6 +52,7 @@ export function AppLayout({ user, unreadCount = 0, chatUnreadCount = 0, onLogout
         newestOnTop
         closeOnClick
         pauseOnHover
+        closeButton
         draggable={false}
         limit={3}
         toastClassName={STITCH_TOAST_CLASSNAME}
@@ -55,9 +77,12 @@ export function AppLayout({ user, unreadCount = 0, chatUnreadCount = 0, onLogout
       <main
         className={`min-h-screen ${isOnline ? 'pt-20' : 'pt-32'} ${showBottomNav ? BOTTOM_NAV_CLEARANCE_CLASS : ''}`.trim()}
       >
-        <Outlet context={{ user, unreadCount, onLogout }} />
+        <Outlet context={{ user, unreadCount, onLogoutRequest: handleLogoutRequest }} />
       </main>
       {showBottomNav ? <BottomNav chatUnreadCount={chatUnreadCount} /> : null}
+      {logoutConfirmOpen ? (
+        <LogoutConfirmModal onConfirm={handleLogoutConfirm} onCancel={handleLogoutCancel} />
+      ) : null}
     </>
   );
 }

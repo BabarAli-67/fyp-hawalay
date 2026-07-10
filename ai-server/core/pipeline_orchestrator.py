@@ -23,7 +23,10 @@ from utils.analyze_context import build_analyze_context, build_extracted_attribu
 from utils.report_caption import (
     build_caption_context_from_analyze,
     build_ocr_fallback_caption,
+    build_structured_fallback_caption,
+    is_truncated_caption,
     is_unusable_caption,
+    repair_incomplete_caption,
 )
 from utils.report_features import format_feature_bullets, resolve_feature_points
 from utils.gemini_debug import mask_api_key
@@ -401,6 +404,14 @@ class AnalyzeOrchestrator:
                 cap_result = cap_out.result or {}
                 quota_limited = bool(cap_result.get("rate_limited"))
                 caption = (cap_result.get("caption") or "").strip()
+                if caption and is_truncated_caption(caption):
+                    repaired = repair_incomplete_caption(caption)
+                    if repaired:
+                        logger.info(
+                            "[vision] repaired truncated Gemini caption words=%d",
+                            len(repaired.split()),
+                        )
+                        caption = repaired
                 if cap_out.error:
                     logger.error(
                         "[vision] GEMINI_CAPTION provider error: %s",
@@ -479,6 +490,25 @@ class AnalyzeOrchestrator:
                     logger.warning(
                         "[vision] OCR fallback caption applied reason=%s words=%d",
                         caption_skip_reason or "unknown",
+                        len(caption.split()),
+                    )
+
+            if (not caption.strip() or is_truncated_caption(caption)) and image_bytes:
+                structured = build_structured_fallback_caption(
+                    ocr_payload,
+                    detected_object_names=detected_object_names,
+                    category=category,
+                )
+                if structured:
+                    caption = structured
+                    vision_status = "structured_fallback"
+                    if not vision_message:
+                        vision_message = (
+                            "AI description was incomplete — a complete draft was built from "
+                            "detected item details."
+                        )
+                    logger.warning(
+                        "[vision] structured fallback caption applied words=%d",
                         len(caption.split()),
                     )
 

@@ -6,7 +6,7 @@ const { resolveSuggestedCategory, getOcrCategoryConfidence } = require('./catego
 
 const REPORT_CATEGORIES = ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'];
 
-/** Minimum object_v1 detection confidence to trust aiCategory for effectiveCategory. */
+/** Minimum object_v1 detection confidence (retained for metadata / auditing). */
 const AI_CATEGORY_CONFIDENCE_THRESHOLD = Number(
   process.env.AI_CATEGORY_CONFIDENCE_THRESHOLD || 0.55,
 );
@@ -91,23 +91,25 @@ function resolveCategoryDetectionConfidence(detectedObjects, aiResponse) {
  */
 function resolveCategoryFields({ userCategory, detectedObjects = [], aiResponse = null }) {
   const normalizedUser = normalizeCategory(userCategory);
-  if (!normalizedUser) {
-    throw new Error('Invalid user category');
-  }
-
   const aiCategory = resolveAiCategory(detectedObjects, aiResponse);
   const categoryDetectionConfidence = resolveCategoryDetectionConfidence(
     detectedObjects,
     aiResponse,
   );
-  const categoryMismatch = Boolean(aiCategory && aiCategory !== normalizedUser);
+  const categoryMismatch = Boolean(
+    normalizedUser && aiCategory && aiCategory !== normalizedUser,
+  );
 
-  let effectiveCategory = normalizedUser;
-  if (
-    aiCategory &&
-    categoryDetectionConfidence >= AI_CATEGORY_CONFIDENCE_THRESHOLD
-  ) {
+  let effectiveCategory;
+  if (normalizedUser) {
+    // Rule 1: explicit user selection is always final
+    effectiveCategory = normalizedUser;
+  } else if (aiCategory) {
+    // Rule 2: no user selection — use AI prediction when available
     effectiveCategory = aiCategory;
+  } else {
+    // Rule 3: existing fallback when neither is available
+    throw new Error('Invalid user category');
   }
 
   return {
@@ -122,18 +124,40 @@ function resolveCategoryFields({ userCategory, detectedObjects = [], aiResponse 
 }
 
 /**
- * Effective category for legacy documents without new fields.
+ * Effective category for legacy documents and API display.
+ * User selection wins when stored; AI only when user category is absent.
  *
  * @param {object} doc MongoDB item document
  */
 function getEffectiveCategoryFromDoc(doc) {
   if (!doc || typeof doc !== 'object') return null;
-  if (doc.effectiveCategory) return normalizeCategory(doc.effectiveCategory);
-  const aiCat = doc.aiCategory || doc.aiMetadata?.suggestedCategory;
-  if (aiCat && normalizeCategory(aiCat)) {
-    return normalizeCategory(aiCat);
-  }
-  return normalizeCategory(doc.category);
+
+  const userCat = normalizeCategory(doc.userCategory);
+  if (userCat) return userCat;
+
+  const aiCat = getAiCategoryFromDoc(doc);
+  if (aiCat) return aiCat;
+
+  return normalizeCategory(doc.effectiveCategory) || normalizeCategory(doc.category);
+}
+
+/**
+ * Apply resolved display category on API responses (fixes legacy mismatched rows).
+ *
+ * @param {object} doc MongoDB item document or lean object
+ */
+function applyResolvedCategoryToItem(doc) {
+  if (!doc || typeof doc !== 'object') return doc;
+
+  const resolved = getEffectiveCategoryFromDoc(doc);
+  if (!resolved) return doc;
+
+  const plain = typeof doc.toObject === 'function' ? doc.toObject() : { ...doc };
+  return {
+    ...plain,
+    category: resolved,
+    effectiveCategory: resolved,
+  };
 }
 
 function getUserCategoryFromDoc(doc) {
@@ -160,4 +184,5 @@ module.exports = {
   getEffectiveCategoryFromDoc,
   getUserCategoryFromDoc,
   getAiCategoryFromDoc,
+  applyResolvedCategoryToItem,
 };

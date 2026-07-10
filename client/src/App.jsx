@@ -4,6 +4,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout.jsx';
 import ChatNotifyListener from './components/chat/ChatNotifyListener.jsx';
+import MatchNotifyListener from './components/matches/MatchNotifyListener.jsx';
 import { PrivateRoute } from './components/routing/PrivateRoute.jsx';
 import { SplashScreen } from './components/ui/splash-screen.jsx';
 import { useAuth } from './context/AuthContext.jsx';
@@ -12,15 +13,16 @@ import LoginPage from './pages/auth/LoginPage.jsx';
 import RegisterPage from './pages/auth/RegisterPage.jsx';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
-import ReportPage from './pages/ReportPage.jsx';
+import ReportItemPage from './pages/ReportItemPage.jsx';
 import BrowseFeedPage from './pages/BrowseFeedPage.jsx';
-import MatchResultsPage from './pages/MatchResultsPage.jsx';
+import SmartMatchesPage from './pages/SmartMatchesPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import ChatsPage from './pages/ChatsPage.jsx';
 import NotificationsPage from './pages/NotificationsPage.jsx';
 import ProfilePage from './pages/ProfilePage.jsx';
 import ItemDetailsPage from './pages/ItemDetailsPage.jsx';
 import OfflineExperiencePage from './pages/OfflineExperiencePage.jsx';
+import PrivacyPolicyPage from './pages/PrivacyPolicyPage.jsx';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
@@ -30,6 +32,7 @@ function AppShell() {
 
   useEffect(() => {
     if (!user) return;
+    if (location.pathname === '/chats') return;
     fetchChatInbox();
   }, [location.pathname, user, fetchChatInbox]);
 
@@ -40,6 +43,7 @@ function AppShell() {
   return (
     <>
       {user ? <ChatNotifyListener onUnreadIncrement={handleChatUnreadRefresh} /> : null}
+      {user ? <MatchNotifyListener /> : null}
       <AppLayout
         user={user}
         unreadCount={unreadCount}
@@ -75,14 +79,17 @@ export default function App() {
           <Route path="/" element={<HomeRedirect />} />
           <Route element={<PrivateRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/report" element={<ReportPage />} />
+            <Route path="/report" element={<ReportItemPage />} />
+            <Route path="/report/wizard" element={<Navigate to="/report" replace />} />
             <Route path="/matches" element={<BrowseFeedPage />} />
-            <Route path="/matches/ai/:itemId" element={<MatchResultsPage />} />
+            <Route path="/matches/ai/:itemId" element={<SmartMatchesPage />} />
+            <Route path="/my-matches" element={<SmartMatchesPage />} />
             <Route path="/chats" element={<ChatsPage />} />
             <Route path="/chat" element={<Navigate to="/chats" replace />} />
             <Route path="/chat/:id" element={<ChatPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/privacy" element={<PrivacyPolicyPage />} />
             <Route path="/item/:id" element={<ItemDetailsPage />} />
             <Route path="/offline" element={<OfflineExperiencePage />} />
           </Route>

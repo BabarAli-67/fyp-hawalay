@@ -90,6 +90,10 @@ def _resolve_ai_category(doc: dict[str, Any]) -> str | None:
 
 
 def _resolve_effective_category(doc: dict[str, Any]) -> str | None:
+    """User-selected category wins; AI only when user category is absent."""
+    user = doc.get("userCategory")
+    if user:
+        return str(user)
     effective = doc.get("effectiveCategory")
     if effective:
         return str(effective)

@@ -277,8 +277,8 @@ def count_complete_sentences(caption: str) -> int:
     return sum(1 for chunk in chunks if chunk.strip())
 
 
-def is_incomplete_report_caption(caption: str) -> bool:
-    """Detect truncated or mid-phrase endings."""
+def is_truncated_caption(caption: str) -> bool:
+    """Detect mid-phrase cutoffs — these must never reach the report form."""
     text = (caption or "").strip()
     if not text:
         return True
@@ -291,10 +291,72 @@ def is_incomplete_report_caption(caption: str) -> bool:
     if not ends_with_proper_punctuation(text):
         return True
 
+    return False
+
+
+def is_incomplete_report_caption(caption: str) -> bool:
+    """Detect truncated endings or ideal-length shortfalls (retry / weak quality)."""
+    text = (caption or "").strip()
+    if not text:
+        return True
+
+    if is_truncated_caption(text):
+        return True
+
     if count_complete_sentences(text) < MIN_CAPTION_SENTENCES:
         return True
 
     return False
+
+
+def repair_incomplete_caption(caption: str) -> str:
+    """
+    Salvage a truncated Gemini caption by keeping complete sentences or
+    dropping the dangling final clause.
+    """
+    text = (caption or "").strip()
+    if not text or not is_truncated_caption(text):
+        return text
+
+    chunks = re.split(r"(?<=[.!?])\s+", text)
+    complete = [
+        chunk.strip()
+        for chunk in chunks
+        if chunk.strip() and ends_with_proper_punctuation(chunk.strip())
+    ]
+    if complete:
+        repaired = " ".join(complete)
+        if len(repaired.split()) >= MIN_USABLE_CAPTION_WORDS and not is_truncated_caption(repaired):
+            return repaired
+
+    trimmed = text.rstrip(" ,;:")
+    if "," in trimmed:
+        head = trimmed.rsplit(",", 1)[0].strip()
+        if head and len(head.split()) >= MIN_USABLE_CAPTION_WORDS:
+            if not ends_with_proper_punctuation(head):
+                head += "."
+            if not is_truncated_caption(head):
+                return head
+
+    for marker in (
+        " featuring ",
+        " showing ",
+        " with ",
+        " including ",
+        " containing ",
+        " displaying ",
+        " having ",
+    ):
+        idx = text.lower().rfind(marker)
+        if idx > 0:
+            head = text[:idx].strip()
+            if head and len(head.split()) >= MIN_USABLE_CAPTION_WORDS:
+                if not ends_with_proper_punctuation(head):
+                    head += "."
+                if not is_truncated_caption(head):
+                    return head
+
+    return ""
 
 
 def explain_caption_validation(
@@ -318,13 +380,18 @@ def explain_caption_validation(
     if len(words) < MIN_CAPTION_WORDS:
         reasons.append(f"below_ideal_words:{len(words)}<{MIN_CAPTION_WORDS}")
 
-    if is_incomplete_report_caption(text):
-        if not ends_with_proper_punctuation(text):
-            reasons.append("missing_terminal_punctuation")
+    if is_truncated_caption(text):
         for pattern in INCOMPLETE_TRAILING_PATTERNS:
             if re.search(pattern, text.lower(), flags=re.IGNORECASE):
                 reasons.append(f"incomplete_trailing:{pattern}")
                 break
+        if not ends_with_proper_punctuation(text):
+            reasons.append("missing_terminal_punctuation")
+        if count_complete_sentences(text) < MIN_CAPTION_SENTENCES:
+            reasons.append(
+                f"insufficient_sentences:{count_complete_sentences(text)}<{MIN_CAPTION_SENTENCES}",
+            )
+    elif is_incomplete_report_caption(text):
         if count_complete_sentences(text) < MIN_CAPTION_SENTENCES:
             reasons.append(
                 f"insufficient_sentences:{count_complete_sentences(text)}<{MIN_CAPTION_SENTENCES}",
@@ -354,6 +421,9 @@ def is_unusable_caption(caption: str, ocr_payload: dict[str, Any] | None = None)
     if len(words) < MIN_USABLE_CAPTION_WORDS or len(text) < MIN_USABLE_CAPTION_CHARS:
         return True
 
+    if is_truncated_caption(text):
+        return True
+
     if is_robotic_report_caption(text):
         return True
 
@@ -369,6 +439,8 @@ def is_unusable_caption(caption: str, ocr_payload: dict[str, Any] | None = None)
 def caption_quality_score(caption: str, ocr_payload: dict[str, Any] | None = None) -> tuple[int, int, int]:
     """Sort key for picking the best Gemini attempt (higher is better)."""
     text = (caption or "").strip()
+    if is_truncated_caption(text):
+        return (0, 0, len(text.split()))
     usable = 0 if is_unusable_caption(text, ocr_payload) else 1
     ideal = 0 if is_weak_report_caption(text, ocr_payload) else 1
     return (usable, ideal, len(text.split()))

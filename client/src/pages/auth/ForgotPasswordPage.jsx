@@ -79,7 +79,7 @@ export default function ForgotPasswordPage() {
           </div>
         ) : null}
 
-        <div className="w-full max-w-md glass-panel p-xl rounded-xl shadow-lg border border-white/50">
+        <div className="w-full max-w-md glass-panel p-xl rounded-xl shadow-lg border border-outline-variant/30">
           <form className="space-y-lg" onSubmit={handleSubmit}>
             <div className="relative floating-label-container group">
               <input

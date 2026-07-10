@@ -9,8 +9,9 @@ const {
 } = require('../services/aiClient');
 const { deleteFromGridFS, getImageStream, uploadToGridFS } = require('../utils/imageStorage');
 const { resolveSuggestedCategory } = require('../utils/categoryMapping');
-const { resolveCategoryFields } = require('../utils/categoryResolution');
+const { resolveCategoryFields, applyResolvedCategoryToItem } = require('../utils/categoryResolution');
 const { resolveItemEmbedding } = require('../utils/itemEmbedding');
+const { buildItemsListFilter } = require('../utils/itemSearch');
 
 const CATEGORIES = ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'];
 const REPORT_TYPES = ['lost', 'found'];
@@ -503,37 +504,7 @@ async function getItems(req, res, next) {
     const limit = req.query.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    const filter = { isDeleted: { $ne: true } };
-    if (category) {
-      const categoryClause = {
-        $or: [
-          { category },
-          { effectiveCategory: category },
-          { userCategory: category },
-        ],
-      };
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, categoryClause];
-        delete filter.$or;
-      } else {
-        Object.assign(filter, categoryClause);
-      }
-    }
-    if (reportType) filter.reportType = reportType;
-    if (ownerId) filter.ownerId = ownerId;
-    if (status) filter.status = status;
-
-    const keyword = typeof q === 'string' ? q.trim() : '';
-    if (keyword) {
-      const regex = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-      filter.$or = [
-        { title: regex },
-        { description: regex },
-        { locationName: regex },
-        { brand: regex },
-        { distinctiveFeatures: regex },
-      ];
-    }
+    const filter = buildItemsListFilter({ category, reportType, ownerId, status, q });
 
     const [items, total] = await Promise.all([
       Item.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
@@ -543,7 +514,7 @@ async function getItems(req, res, next) {
     const totalPages = Math.ceil(total / limit) || 1;
 
     return res.status(200).json({
-      items,
+      items: items.map((row) => applyResolvedCategoryToItem(row)),
       total,
       page,
       totalPages,
@@ -564,7 +535,7 @@ async function getItemById(req, res, next) {
       return res.status(404).json({ error: 'Item not found' });
     }
 
-    return res.status(200).json(item);
+    return res.status(200).json(applyResolvedCategoryToItem(item));
   } catch (err) {
     return next(err);
   }
@@ -609,7 +580,7 @@ async function streamImage(req, res, next) {
   }
 }
 
-const ITEM_STATUSES = ['active', 'claimed', 'expired'];
+const ITEM_STATUSES = ['active', 'claimed', 'expired', 'returned'];
 
 async function deleteItem(req, res, next) {
   try {
@@ -658,9 +629,15 @@ async function updateStatus(req, res, next) {
     if (status === 'claimed') {
       update.claimedAt = new Date();
       update.claimedByUserId = claimedByUserId || null;
+      update.returnedAt = null;
+    } else if (status === 'returned') {
+      update.returnedAt = new Date();
+      update.claimedAt = update.returnedAt;
+      update.claimedByUserId = claimedByUserId || null;
     } else {
       update.claimedAt = null;
       update.claimedByUserId = null;
+      update.returnedAt = null;
     }
 
     const updated = await Item.findByIdAndUpdate(req.params.id, update, { new: true });

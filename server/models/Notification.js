@@ -9,7 +9,7 @@ const notificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['match_found', 'system'],
+      enum: ['match_found', 'system', 'return_finder_confirmed', 'return_owner_confirmed', 'return_completed'],
       default: 'match_found',
     },
     title: {

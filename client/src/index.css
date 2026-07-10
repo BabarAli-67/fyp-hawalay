@@ -1,9 +1,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+@import './theme/tokens.css';
 
 /**
  * Global styles + Stitch-derived utility classes.
- * Color tokens: see `tailwind.config.js` (single source for Tailwind utilities).
+ * Color tokens: `src/theme/tokens.css` (light/dark CSS variables).
  */
 @tailwind base;
 @tailwind components;
@@ -12,31 +13,36 @@
 /* Leaflet map tiles sit below Hawalay overlays (buttons, cards). */
 .hawalay-map .leaflet-container {
   font-family: var(--font-brand);
+  background: rgb(var(--color-surface-container-low));
 }
 
-/**
- * CSS variables mirror tailwind.config.js named brand keys (same hex values as Stitch).
- */
-:root {
-  --color-primary: #006c49;
-  --color-secondary: #006a61;
-  --color-accent: #e29100;
-  --color-surface: #f8f9fa;
-  --color-danger: #ba1a1a;
-  --color-success: #10b981;
-
-  --font-brand: 'Manrope', ui-sans-serif, system-ui, sans-serif;
-  --font-material-symbols: 'Material Symbols Outlined';
-
-  --radius-card: 0.75rem;
-  --radius-card-inner: 0.5rem;
-  --radius-pill: 9999px;
-  --radius-message: 1rem;
+.dark .hawalay-map .leaflet-container {
+  filter: none;
 }
 
 @layer base {
+  :root {
+    --font-brand: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+    --font-material-symbols: 'Material Symbols Outlined';
+    --radius-card: 0.75rem;
+    --radius-card-inner: 0.5rem;
+    --radius-pill: 9999px;
+    --radius-message: 1rem;
+  }
+
   html {
     font-family: var(--font-brand);
+    color-scheme: light;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-on-background antialiased;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
 
   .material-symbols-outlined {
@@ -62,7 +68,7 @@
 /* login.html — .glass-panel (default), signUp uses same class with blur 16px under .register-page */
 @layer components {
   .glass-panel {
-    background: rgba(255, 255, 255, 0.7);
+    background: rgb(var(--color-glass-bg) / 0.72);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
   }
@@ -76,19 +82,19 @@
   .floating-label-container:focus-within label,
   .floating-label-container input:not(:placeholder-shown) + label {
     transform: translateY(-20px) scale(0.85);
-    color: #006c49;
+    color: rgb(var(--color-primary));
   }
 
   /* signUp.html — .floating-label-group */
   .floating-label-group:focus-within label,
   .floating-label-group input:not(:placeholder-shown) + label {
     transform: translateY(-24px) scale(0.85);
-    color: #006c49;
+    color: rgb(var(--color-primary));
   }
 
   .register-page input:focus {
     outline: none;
-    border-color: #006c49;
+    border-color: rgb(var(--color-primary));
   }
 
   .container-app {
@@ -98,7 +104,7 @@
 
   /* dashboard.html */
   .glass-card {
-    background: rgba(255, 255, 255, 0.7);
+    background: rgb(var(--color-glass-card-bg) / 0.72);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
@@ -113,21 +119,20 @@
   }
 }
 
-
 /* ai_match_results.html + real_time_chat.html utility classes */
 .premium-shadow {
-  box-shadow: 0 10px 30px -10px rgba(0, 108, 73, 0.15);
+  box-shadow: 0 10px 30px -10px rgb(var(--color-shadow-primary) / 0.15);
 }
 .active-chip {
-  background-color: #006c49;
-  color: #ffffff;
+  background-color: rgb(var(--color-primary));
+  color: rgb(var(--color-on-primary));
 }
 .glass-header {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
 .message-shadow {
-  box-shadow: 0 2px 4px rgba(0, 108, 73, 0.08);
+  box-shadow: 0 2px 4px rgb(var(--color-shadow-primary) / 0.08);
 }
 .no-scrollbar::-webkit-scrollbar {
   display: none;
@@ -152,9 +157,25 @@
   -webkit-backdrop-filter: blur(20px);
 }
 
+/* react-toastify — align close button with Stitch toast surface */
+.Toastify__toast-theme--light,
+.Toastify__toast-theme--dark {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.Toastify__close-button {
+  color: rgb(var(--color-inverse-on-surface));
+  opacity: 0.72;
+}
+
+.Toastify__close-button:hover {
+  opacity: 1;
+}
+
 @layer utilities {
   .transition-soft {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
-

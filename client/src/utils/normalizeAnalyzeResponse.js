@@ -103,6 +103,43 @@ function normalizeSuggestedCategory(raw) {
   return text || null;
 }
 
+const TRAILING_FRAGMENT_RE =
+  /\b(featuring|showing|with|including|containing|displaying|having|centered|located)\s+(a|an|the|on|in|at)?\s*$/i;
+
+function endsWithSentencePunctuation(text) {
+  return /[.!?]["')]*\s*$/.test(text);
+}
+
+/**
+ * Drop a dangling final clause when Gemini stops mid-sentence.
+ * Mirrors ai-server/utils/report_caption.repair_incomplete_caption (lightweight).
+ */
+function sanitizeTruncatedCaption(caption) {
+  const text = String(caption || '').trim();
+  if (!text || endsWithSentencePunctuation(text)) return text;
+  if (!TRAILING_FRAGMENT_RE.test(text) && !/[,;:]\s*$/.test(text)) return text;
+
+  const commaIdx = text.lastIndexOf(',');
+  if (commaIdx > 20) {
+    const head = text.slice(0, commaIdx).trim();
+    if (head.length >= 40 && !TRAILING_FRAGMENT_RE.test(head)) {
+      return endsWithSentencePunctuation(head) ? head : `${head}.`;
+    }
+  }
+
+  for (const marker of [' featuring ', ' showing ', ' with ', ' including ', ' containing ']) {
+    const idx = text.toLowerCase().lastIndexOf(marker);
+    if (idx > 20) {
+      const head = text.slice(0, idx).trim();
+      if (head.length >= 40) {
+        return endsWithSentencePunctuation(head) ? head : `${head}.`;
+      }
+    }
+  }
+
+  return text;
+}
+
 /**
  * @param {object} data Raw analyze-image API response
  */
@@ -139,7 +176,7 @@ export function normalizeAnalyzeResponse(data) {
     ocr: normalizeOcrBlock(data.ocr),
     objectDetection: normalizeObjectDetection(data.object_detection || data.objectDetection),
     extractedAttributes,
-    caption: (data.caption || '').trim(),
+    caption: sanitizeTruncatedCaption((data.caption || '').trim()),
     distinctiveFeatures,
     featurePoints,
     ocrText: (data.ocr_text || data.ocrText || '').trim(),

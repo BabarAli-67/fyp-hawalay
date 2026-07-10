@@ -5,6 +5,7 @@ const Item = require('../models/Item');
 const User = require('../models/User');
 const { formatUserAvatarFields } = require('../utils/userAvatarUrl');
 const { findMatchForParticipant } = require('../utils/matchParticipant');
+const { getReturnVerification } = require('../services/returnVerificationService');
 
 const MESSAGE_LIMIT = 50;
 
@@ -30,6 +31,40 @@ async function getLastMessagesByRoom(matchIds) {
   return new Map(rows.map((row) => [row._id.toString(), row]));
 }
 
+async function getUnreadCountsByRoom(matchIds, readerUserId) {
+  if (!matchIds.length) {
+    return new Map();
+  }
+
+  const readerObjectId = new mongoose.Types.ObjectId(readerUserId);
+  const roomObjectIds = matchIds.map((id) => new mongoose.Types.ObjectId(id));
+
+  const rows = await Message.aggregate([
+    {
+      $match: {
+        chatRoomId: { $in: roomObjectIds },
+        senderId: { $ne: readerObjectId },
+        readBy: { $nin: [readerObjectId] },
+      },
+    },
+    { $group: { _id: '$chatRoomId', count: { $sum: 1 } } },
+  ]);
+
+  return new Map(rows.map((row) => [row._id.toString(), row.count]));
+}
+
+function summarizeItem(item) {
+  if (!item) return null;
+  return {
+    _id: item._id,
+    title: item.title,
+    brand: item.brand,
+    reportType: item.reportType,
+    category: item.category,
+    ownerId: item.ownerId,
+  };
+}
+
 function mergeMatchesById(primary, extra) {
   const byId = new Map(primary.map((m) => [m._id.toString(), m]));
   for (const m of extra) {
@@ -41,16 +76,6 @@ function mergeMatchesById(primary, extra) {
   return [...byId.values()].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
-}
-
-function isRoomUnreadForUser(preview, userId) {
-  if (!preview?.content) return false;
-  const senderId = preview.senderId?.toString?.() ?? String(preview.senderId ?? '');
-  if (!senderId || senderId === userId) return false;
-  const readBy = Array.isArray(preview.readBy)
-    ? preview.readBy.map((id) => id.toString())
-    : [];
-  return !readBy.includes(userId);
 }
 
 async function listChatRooms(req, res, next) {
@@ -104,11 +129,12 @@ async function listChatRooms(req, res, next) {
       if (m.matchedItemOwnerId) ownerIds.add(m.matchedItemOwnerId.toString());
     }
 
-    const [items, lastByRoom] = await Promise.all([
+    const [items, lastByRoom, unreadCountsByRoom] = await Promise.all([
       Item.find({ _id: { $in: [...itemIds] } })
-        .select('title ownerId')
+        .select('title brand ownerId reportType category')
         .lean(),
       getLastMessagesByRoom(matchIds),
+      getUnreadCountsByRoom(matchIds, userId),
     ]);
 
     const itemById = new Map(items.map((item) => [item._id.toString(), item]));
@@ -121,7 +147,7 @@ async function listChatRooms(req, res, next) {
     }
 
     const users = await User.find({ _id: { $in: [...ownerIds] } })
-      .select('name')
+      .select('name avatarFileId updatedAt')
       .lean();
     const userById = new Map(users.map((u) => [u._id.toString(), u]));
 
@@ -139,16 +165,21 @@ async function listChatRooms(req, res, next) {
         const otherUser = userById.get(otherUserId);
 
         const preview = lastByRoom.get(m._id.toString());
+        const unreadCount = unreadCountsByRoom.get(m._id.toString()) || 0;
+        const myItem = summarizeItem(userId === sourceOwnerId ? sourceItem : matchedItem);
+        const peerItem = summarizeItem(userId === sourceOwnerId ? matchedItem : sourceItem);
 
         return {
           matchId: m._id,
           otherUser: otherUser
-            ? { _id: otherUser._id, name: otherUser.name }
-            : { _id: otherUserId, name: 'User' },
+            ? formatUserAvatarFields(otherUser)
+            : { _id: otherUserId, name: 'User', avatarUrl: null },
           items: {
-            source: { _id: sourceItem._id, title: sourceItem.title },
-            matched: { _id: matchedItem._id, title: matchedItem.title },
+            source: summarizeItem(sourceItem),
+            matched: summarizeItem(matchedItem),
           },
+          myItem,
+          peerItem,
           lastMessage: preview
             ? {
                 content: preview.content,
@@ -157,7 +188,8 @@ async function listChatRooms(req, res, next) {
                 readBy: preview.readBy || [],
               }
             : null,
-          unread: isRoomUnreadForUser(preview, userId),
+          unread: unreadCount > 0,
+          unreadCount,
           createdAt: m.createdAt,
         };
       })
@@ -234,10 +266,15 @@ async function getChatMessages(req, res, next) {
       };
     });
 
+    const returnStatus = await getReturnVerification(matchId, userId);
+    const returnVerification =
+      returnStatus.error == null ? returnStatus.returnVerification : null;
+
     return res.status(200).json({
       matchId: match._id,
       messages,
       participants: participants.map(formatUserAvatarFields),
+      returnVerification,
     });
   } catch (err) {
     return next(err);

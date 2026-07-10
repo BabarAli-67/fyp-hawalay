@@ -12,6 +12,7 @@ const notificationRoutes = require('./routes/notifications');
 const matchRoutes = require('./routes/matches');
 const chatRoutes = require('./routes/chat');
 const userRoutes = require('./routes/users');
+const statsRoutes = require('./routes/stats');
 const { parseAllowedOrigins, isOriginAllowed } = require('./utils/corsOrigins');
 
 const app = express();
@@ -73,6 +74,7 @@ app.use('/api/matches', matchRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/stats', statsRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

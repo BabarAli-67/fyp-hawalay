@@ -211,7 +211,7 @@ export default function RegisterPage() {
           </div>
         ) : null}
 
-        <div className="glass-panel p-lg rounded-xl shadow-lg border border-white/40">
+        <div className="glass-panel p-lg rounded-xl shadow-lg border border-outline-variant/30">
           {step === 'details' ? (
             <form className="space-y-lg" onSubmit={handleSendOtp}>
               <div className="relative floating-label-group">

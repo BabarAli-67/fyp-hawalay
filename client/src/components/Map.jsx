@@ -18,6 +18,7 @@
  */
 import { useEffect } from 'react';
 import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { useTheme } from '../context/ThemeContext.jsx';
 import '../utils/leafletIcon.js';
 
 /** MongoDB GeoJSON order: [longitude, latitude] */
@@ -33,6 +34,9 @@ export function leafletToGeoJson([lat, lng]) {
 const OSM_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const DARK_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const DARK_TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 
 const DEFAULT_CENTER = [30.3753, 69.3451];
 const DEFAULT_ZOOM = 5;
@@ -57,6 +61,17 @@ function MapViewSync({ center, zoom }) {
     map.setView(center, zoom ?? map.getZoom());
   }, [center, zoom, map]);
   return null;
+}
+
+function ThemedTileLayer() {
+  const { isDark } = useTheme();
+  return (
+    <TileLayer
+      key={isDark ? 'dark' : 'light'}
+      attribution={isDark ? DARK_ATTRIBUTION : OSM_ATTRIBUTION}
+      url={isDark ? DARK_TILE_URL : OSM_TILE_URL}
+    />
+  );
 }
 
 /**
@@ -95,7 +110,7 @@ export function Map({
         className="h-full w-full z-0"
         style={{ height: '100%', width: '100%' }}
       >
-        <TileLayer attribution={OSM_ATTRIBUTION} url={OSM_TILE_URL} />
+        <ThemedTileLayer />
         <MapViewSync center={mapCenter} zoom={mapZoom} />
         {onMapClick ? <MapClickHandler onMapClick={onMapClick} /> : null}
         {markerPosition ? (

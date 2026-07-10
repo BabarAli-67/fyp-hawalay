@@ -26,10 +26,12 @@ from utils.report_caption import (
     caption_quality_score,
     compose_caption_prompt,
     explain_caption_validation,
+    is_truncated_caption,
     is_unusable_caption,
     is_valid_report_caption,
     is_weak_report_caption,
     normalize_caption_output,
+    repair_incomplete_caption,
 )
 from utils.report_features import compose_features_prompt
 
@@ -207,6 +209,16 @@ def generate_caption(
                 break
 
         caption = _pick_best_caption(attempts, ocr_payload)
+
+        if caption.strip() and is_truncated_caption(caption):
+            repaired = repair_incomplete_caption(caption)
+            if repaired:
+                logger.info(
+                    "[caption] repaired truncated caption words=%d chars=%d",
+                    len(repaired.split()),
+                    len(repaired),
+                )
+                caption = repaired
 
         if caption.strip() and not is_unusable_caption(caption, ocr_payload):
             if is_valid_report_caption(caption, ocr_payload):

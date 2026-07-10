@@ -168,7 +168,7 @@ const itemSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'claimed', 'expired'],
+      enum: ['active', 'claimed', 'expired', 'returned'],
       default: 'active',
     },
     isDeleted: {
@@ -181,6 +181,10 @@ const itemSchema = new mongoose.Schema(
       default: null,
     },
     claimedAt: {
+      type: Date,
+      default: null,
+    },
+    returnedAt: {
       type: Date,
       default: null,
     },

@@ -56,6 +56,18 @@ function typeMeta(type) {
       borderClass: '',
     };
   }
+  if (
+    type === 'return_finder_confirmed' ||
+    type === 'return_owner_confirmed' ||
+    type === 'return_completed'
+  ) {
+    return {
+      title: 'Return update',
+      icon: 'verified_user',
+      iconClass: 'bg-primary-container/20 text-primary',
+      borderClass: 'border-l-4 border-primary-container',
+    };
+  }
   return {
     title: 'Notification',
     icon: 'notifications',
@@ -86,8 +98,17 @@ function NotificationSkeleton() {
 
 function matchesFilter(notification, filterId) {
   if (filterId === 'all') return true;
-  if (filterId === 'matches') return notification.type === 'match_found';
-  if (filterId === 'system') return notification.type === 'system';
+  if (filterId === 'matches') {
+    return (
+      notification.type === 'match_found' ||
+      notification.type === 'return_finder_confirmed' ||
+      notification.type === 'return_owner_confirmed' ||
+      notification.type === 'return_completed'
+    );
+  }
+  if (filterId === 'system') {
+    return notification.type === 'system' || notification.type === 'return_completed';
+  }
   if (filterId === 'messages') return false;
   return true;
 }
@@ -304,7 +325,7 @@ export default function NotificationsPage() {
                       ) : null}
                       {notification.type === 'match_found' && itemId ? (
                         <Link
-                          to={`/matches/ai/${itemId}`}
+                          to="/my-matches"
                           className="font-label-sm text-primary hover:underline transition-all"
                         >
                           View Match

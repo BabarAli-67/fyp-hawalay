@@ -121,7 +121,7 @@ export function AvatarEditorModal({ user, onClose }) {
         onChange={handleFileChange}
       />
       <div className="flex flex-col items-center gap-md">
-        <UserAvatar user={previewUser} size="lg" className="border-4 border-white shadow-lg" />
+        <UserAvatar user={previewUser} size="lg" className="border-4 border-surface-container-lowest shadow-lg" />
         <p className="font-body-md text-on-surface-variant text-center">
           JPEG or PNG, up to 5 MB. Your photo is stored securely on your account.
         </p>

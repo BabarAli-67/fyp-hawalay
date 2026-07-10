@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
+import { ThemeProvider } from './context/ThemeContext.jsx';
 import { PwaInstallProvider } from './context/PwaInstallContext.jsx';
 import 'leaflet/dist/leaflet.css';
 import './index.css';
@@ -13,11 +14,13 @@ registerOfflineSyncListeners();
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>
-      <AuthProvider>
-        <PwaInstallProvider>
-          <App />
-        </PwaInstallProvider>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <PwaInstallProvider>
+            <App />
+          </PwaInstallProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   </StrictMode>,
 );

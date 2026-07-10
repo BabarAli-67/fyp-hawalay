@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import axiosInstance from '../api/axiosInstance.js';
 import { BrowseFilters } from '../components/browse/BrowseFilters.jsx';
 import { BrowseItemCard } from '../components/items/BrowseItemCard.jsx';
@@ -6,18 +7,44 @@ import { EmptyState } from '../components/ui/EmptyState.jsx';
 import { Spinner } from '../components/ui/Spinner.jsx';
 import { mapItemForCard } from '../utils/mapItemForCard.js';
 
+const SEARCH_DEBOUNCE_MS = 300;
+
 /**
  * Community browse feed — all active lost & found reports (Search tab).
  */
 export default function BrowseFeedPage() {
+  const [searchParams] = useSearchParams();
+  const initialQuery = searchParams.get('q') ?? '';
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const [reportType, setReportType] = useState('');
   const [category, setCategory] = useState('');
-  const [keyword, setKeyword] = useState('');
-  const [appliedKeyword, setAppliedKeyword] = useState('');
+  const [keyword, setKeyword] = useState(initialQuery);
+  const [searchQuery, setSearchQuery] = useState(initialQuery);
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    const q = searchParams.get('q') ?? '';
+    setKeyword(q);
+    setSearchQuery(q);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = window.setTimeout(() => {
+      setSearchQuery(keyword);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, [keyword]);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -30,7 +57,7 @@ export default function BrowseFeedPage() {
       };
       if (reportType) params.reportType = reportType;
       if (category) params.category = category;
-      if (appliedKeyword.trim()) params.q = appliedKeyword.trim();
+      if (searchQuery.trim()) params.q = searchQuery.trim();
 
       const { data } = await axiosInstance.get('/api/items', { params });
       setItems((data.items ?? []).map(mapItemForCard));
@@ -40,14 +67,18 @@ export default function BrowseFeedPage() {
     } finally {
       setLoading(false);
     }
-  }, [reportType, category, appliedKeyword]);
+  }, [reportType, category, searchQuery]);
 
   useEffect(() => {
     fetchItems();
   }, [fetchItems]);
 
   function handleSearchSubmit() {
-    setAppliedKeyword(keyword);
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    setSearchQuery(keyword);
   }
 
   return (
@@ -87,16 +118,16 @@ export default function BrowseFeedPage() {
             icon="travel_explore"
             title="No reports found"
             subtitle={
-              appliedKeyword || reportType || category
+              searchQuery || reportType || category
                 ? 'Try changing your filters or search terms.'
                 : 'Be the first to report a lost or found item.'
             }
-            actionLabel={appliedKeyword || reportType || category ? 'Clear filters' : undefined}
+            actionLabel={searchQuery || reportType || category ? 'Clear filters' : undefined}
             onAction={
-              appliedKeyword || reportType || category
+              searchQuery || reportType || category
                 ? () => {
                     setKeyword('');
-                    setAppliedKeyword('');
+                    setSearchQuery('');
                     setReportType('');
                     setCategory('');
                   }

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { fetchAndCacheMessages } from '../api/chatService.js';
-import { deleteCachedMessages, getCachedMessages } from '../utils/chatCache.js';
+import { deleteCachedMessages, getCachedMessages, setCachedMessages } from '../utils/chatCache.js';
 import { shouldShowBottomNav } from '../components/layout/BottomNav.jsx';
 import { PeerAvatar } from '../components/chat/PeerAvatar.jsx';
+import { ReturnVerificationPanel } from '../components/matches/ReturnVerificationPanel.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useOfflineQueue } from '../hooks/useOfflineQueue.js';
 
@@ -81,7 +82,7 @@ function applyServerHistory(data) {
   const rows = Array.isArray(data?.messages) ? data.messages : [];
   const messages = dedupeMessagesById(rows.map(normalizeApiMessage));
   const participants = Array.isArray(data?.participants) ? data.participants : [];
-  return { messages, participants };
+  return { messages, participants, returnVerification: data?.returnVerification ?? null };
 }
 
 /** Server history wins for persisted ids; keep in-flight optimistic sends. */
@@ -122,6 +123,7 @@ export default function ChatPage() {
 
   const [messages, setMessages] = useState([]);
   const [participants, setParticipants] = useState([]);
+  const [returnVerification, setReturnVerification] = useState(null);
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -139,6 +141,16 @@ export default function ChatPage() {
   const reconnectGenerationRef = useRef(0);
   const wasDisconnectedRef = useRef(false);
   const reconnectFetchInflightRef = useRef(false);
+  const inboxRefreshTimerRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      if (inboxRefreshTimerRef.current) {
+        clearTimeout(inboxRefreshTimerRef.current);
+      }
+    },
+    [],
+  );
 
   matchIdRef.current = matchId;
 
@@ -177,6 +189,13 @@ export default function ChatPage() {
   const markRead = useCallback(() => {
     if (!socket?.connected || !matchIdRef.current || accessDenied) return;
     socket.emit('chat:read', { matchId: matchIdRef.current });
+    if (inboxRefreshTimerRef.current) {
+      clearTimeout(inboxRefreshTimerRef.current);
+    }
+    inboxRefreshTimerRef.current = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('hawalay:refresh-chats'));
+      inboxRefreshTimerRef.current = null;
+    }, 600);
   }, [socket, accessDenied]);
 
   useEffect(() => {
@@ -196,11 +215,13 @@ export default function ChatPage() {
     if (cached) {
       setMessages(dedupeMessagesById(cached.messages.map(normalizeApiMessage)));
       setParticipants(cached.participants);
+      setReturnVerification(cached.returnVerification ?? null);
       setIsLoading(false);
       setIsRefreshing(true);
     } else {
       setMessages([]);
       setParticipants([]);
+      setReturnVerification(null);
       setIsLoading(true);
       setIsRefreshing(false);
     }
@@ -217,10 +238,14 @@ export default function ChatPage() {
         const data = await fetchAndCacheMessages(matchId);
         if (cancelled || fetchGeneration !== fetchGenerationRef.current) return;
 
-        const { messages: freshMessages, participants: freshParticipants } =
+        const { messages: freshMessages, participants: freshParticipants, returnVerification: freshReturn } =
           applyServerHistory(data);
         setMessages(freshMessages);
         setParticipants(freshParticipants);
+        setReturnVerification(freshReturn);
+        if (matchId) {
+          setCachedMessages(matchId, { ...data, returnVerification: freshReturn });
+        }
         setLoadError(null);
       } catch (err) {
         if (cancelled || fetchGeneration !== fetchGenerationRef.current) return;
@@ -628,6 +653,14 @@ export default function ChatPage() {
       </main>
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-outline-variant/20 bg-surface/70 p-4 backdrop-blur-lg">
+        {returnVerification?.userRole ? (
+          <ReturnVerificationPanel
+            matchId={matchId}
+            returnVerification={returnVerification}
+            onUpdated={setReturnVerification}
+            compact
+          />
+        ) : null}
         <form onSubmit={handleSend} className="flex items-end gap-3">
           <div className="flex-1 relative flex items-center">
             <textarea

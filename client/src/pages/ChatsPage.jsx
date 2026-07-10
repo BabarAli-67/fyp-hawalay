@@ -1,70 +1,58 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { fetchAndCacheChatRooms, prefetchChatMessages } from '../api/chatService.js';
-import { PeerAvatar } from '../components/chat/PeerAvatar.jsx';
+import { prefetchChatMessages } from '../api/chatService.js';
+import { ChatInboxFilterPanel } from '../components/chat/ChatInboxFilterPanel.jsx';
+import { ChatInboxToolbar } from '../components/chat/ChatInboxToolbar.jsx';
+import { ChatRoomListItem, ChatRoomListSkeleton } from '../components/chat/ChatRoomListItem.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { getCachedRooms } from '../utils/chatCache.js';
+import {
+  INBOX_SORT,
+  INBOX_TABS,
+  INBOX_TYPE_FILTER,
+  countInboxUnread,
+  filterInboxRooms,
+} from '../utils/chatInboxFilters.js';
+import { getRoomUnreadCount } from '../utils/chatRoomDisplay.js';
 
-function formatMessageTime(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-
-  const diffMs = Date.now() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60_000);
-  if (diffMins < 1) return 'Now';
-  if (diffMins < 60) return `${diffMins}m`;
-
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d`;
-
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function previewText(room, currentUserId) {
-  const last = room.lastMessage;
-  if (!last?.content) {
-    return 'No messages yet — say hi';
-  }
-  const prefix =
-    last.senderId && String(last.senderId) === currentUserId ? 'You: ' : '';
-  const text = String(last.content).trim();
-  const combined = `${prefix}${text}`;
-  return combined.length > 72 ? `${combined.slice(0, 69)}…` : combined;
-}
-
-function ChatRoomSkeleton() {
-  return (
-    <div
-      className="animate-pulse flex gap-md items-center p-md bg-surface-container-lowest rounded-xl shadow-sm"
-      role="status"
-      aria-label="Loading chat"
-    >
-      <div className="w-12 h-12 rounded-full bg-surface-container shrink-0" />
-      <div className="flex-1 space-y-2">
-        <div className="h-4 w-1/3 rounded bg-surface-container" />
-        <div className="h-3 w-4/5 rounded bg-surface-container" />
-      </div>
-    </div>
-  );
-}
+const SEARCH_DEBOUNCE_MS = 250;
 
 /**
  * Inbox of match chat rooms for the logged-in user.
  */
 export default function ChatsPage() {
-  const { user, socket } = useAuth();
+  const { user, socket, fetchChatInbox } = useAuth();
   const currentUserId = user?._id ? String(user._id) : '';
 
   const [rooms, setRooms] = useState(() => getCachedRooms() ?? []);
   const [isLoading, setIsLoading] = useState(() => getCachedRooms() === null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
+
+  const [activeTab, setActiveTab] = useState(INBOX_TABS.ALL);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sort, setSort] = useState(INBOX_SORT.RECENT);
+  const [typeFilter, setTypeFilter] = useState(INBOX_TYPE_FILTER.ALL);
+
   const refreshTimerRef = useRef(null);
+  const searchDebounceRef = useRef(null);
+
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = window.setTimeout(() => {
+      setSearchQuery(searchInput);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [searchInput]);
 
   const loadRooms = useCallback(async ({ background = false } = {}) => {
     if (!background && getCachedRooms() === null) {
@@ -74,7 +62,7 @@ export default function ChatsPage() {
     }
     setLoadError(null);
     try {
-      const rows = await fetchAndCacheChatRooms();
+      const rows = await fetchChatInbox();
       setRooms(rows);
     } catch (err) {
       const message = err?.response?.data?.error || 'Could not load chats';
@@ -87,7 +75,7 @@ export default function ChatsPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [fetchChatInbox]);
 
   const scheduleRefresh = useCallback(() => {
     if (refreshTimerRef.current) {
@@ -124,28 +112,86 @@ export default function ChatsPage() {
     };
   }, [socket, scheduleRefresh]);
 
+  const totalUnreadMessages = useMemo(() => countInboxUnread(rooms), [rooms]);
+
+  const visibleRooms = useMemo(
+    () =>
+      filterInboxRooms(rooms, {
+        tab: activeTab,
+        searchQuery,
+        typeFilter,
+        sort,
+        currentUserId,
+      }),
+    [rooms, activeTab, searchQuery, typeFilter, sort, currentUserId],
+  );
+
+  const unreadRoomCount = useMemo(
+    () => rooms.filter((room) => getRoomUnreadCount(room) > 0).length,
+    [rooms],
+  );
+
+  const hasActiveFilters =
+    searchQuery.trim() ||
+    activeTab === INBOX_TABS.UNREAD ||
+    sort !== INBOX_SORT.RECENT ||
+    typeFilter !== INBOX_TYPE_FILTER.ALL;
+
+  function clearAllFilters() {
+    setSearchInput('');
+    setSearchQuery('');
+    setActiveTab(INBOX_TABS.ALL);
+    setSort(INBOX_SORT.RECENT);
+    setTypeFilter(INBOX_TYPE_FILTER.ALL);
+    setFilterOpen(false);
+  }
+
   return (
     <div className="bg-background text-on-background min-h-screen pb-24">
       <div className="px-margin-mobile max-w-2xl mx-auto">
-        <section className="mb-lg mt-4">
+        <section className="mb-1 mt-3">
           <div className="flex items-baseline justify-between gap-sm">
-            <h2 className="font-h1 text-h1 text-on-surface mb-xs">Messages</h2>
+            <h2 className="font-h1 text-h1 text-on-surface">Messages</h2>
             {isRefreshing ? (
               <span className="font-caption text-caption text-outline shrink-0" aria-live="polite">
                 Updating…
               </span>
             ) : null}
           </div>
-          <p className="font-body-md text-on-surface-variant">
-            Chats with people you matched with on lost and found reports.
-          </p>
         </section>
 
+        <div className="mb-sm">
+          <ChatInboxToolbar
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            allCount={rooms.length}
+            unreadCount={unreadRoomCount}
+            searchQuery={searchInput}
+            onSearchChange={setSearchInput}
+            filterOpen={filterOpen}
+            onFilterToggle={() => setFilterOpen((open) => !open)}
+          />
+          {filterOpen ? (
+            <div className="mt-sm">
+              <ChatInboxFilterPanel
+                sort={sort}
+                typeFilter={typeFilter}
+                onSortChange={setSort}
+                onTypeFilterChange={setTypeFilter}
+                onReset={() => {
+                  setSort(INBOX_SORT.RECENT);
+                  setTypeFilter(INBOX_TYPE_FILTER.ALL);
+                }}
+              />
+            </div>
+          ) : null}
+        </div>
+
         {isLoading ? (
-          <div className="space-y-md">
-            <ChatRoomSkeleton />
-            <ChatRoomSkeleton />
-            <ChatRoomSkeleton />
+          <div className="space-y-xs">
+            <ChatRoomListSkeleton />
+            <ChatRoomListSkeleton />
+            <ChatRoomListSkeleton />
           </div>
         ) : null}
 
@@ -183,58 +229,50 @@ export default function ChatsPage() {
           </div>
         ) : null}
 
-        {!isLoading && !loadError && rooms.length > 0 ? (
-          <ul className="space-y-sm" aria-label="Chat rooms">
-            {rooms.map((room) => {
-              const peerName = room.otherUser?.name || 'User';
-              const matchId = room.matchId;
-              const itemHint =
-                room.items?.source?.title && room.items?.matched?.title
-                  ? `${room.items.source.title} · ${room.items.matched.title}`
-                  : null;
-              const timeLabel = formatMessageTime(
-                room.lastMessage?.createdAt ?? room.createdAt,
-              );
+        {!isLoading && !loadError && rooms.length > 0 && visibleRooms.length === 0 ? (
+          <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low px-md py-xl text-center">
+            <span
+              className="material-symbols-outlined text-[40px] text-on-surface-variant mb-sm block"
+              aria-hidden
+            >
+              search_off
+            </span>
+            <p className="font-h3 text-h3 text-on-surface mb-xs">No matching conversations</p>
+            <p className="font-body-md text-on-surface-variant mb-md">
+              {activeTab === INBOX_TABS.UNREAD
+                ? 'You are all caught up — no unread chats right now.'
+                : 'Try a different search term or adjust your filters.'}
+            </p>
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                className="font-label-sm text-primary hover:underline"
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
-              return (
-                <li key={String(matchId)}>
-                  <Link
-                    to={`/chat/${matchId}`}
-                    className="flex gap-md items-center p-md bg-surface-container-lowest rounded-xl shadow-sm hover:bg-surface-container-low active:scale-[0.99] transition-all"
-                    onMouseEnter={() => prefetchChatMessages(matchId)}
-                    onFocus={() => prefetchChatMessages(matchId)}
-                    onTouchStart={() => prefetchChatMessages(matchId)}
-                  >
-                    <PeerAvatar name={peerName} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-baseline gap-sm mb-0.5">
-                        <h3 className="font-h3 text-h3 text-on-surface truncate">{peerName}</h3>
-                        {timeLabel ? (
-                          <span className="font-caption text-caption text-outline shrink-0">
-                            {timeLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                      {itemHint ? (
-                        <p className="font-caption text-caption text-primary truncate mb-0.5">
-                          {itemHint}
-                        </p>
-                      ) : null}
-                      <p className="font-body-md text-body-md text-on-surface-variant truncate">
-                        {previewText(room, currentUserId)}
-                      </p>
-                    </div>
-                    <span
-                      className="material-symbols-outlined text-outline-variant shrink-0"
-                      aria-hidden
-                    >
-                      chevron_right
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
+        {!isLoading && !loadError && visibleRooms.length > 0 ? (
+          <ul className="space-y-xs" aria-label="Chat rooms">
+            {visibleRooms.map((room) => (
+              <li key={String(room.matchId)}>
+                <ChatRoomListItem
+                  room={room}
+                  currentUserId={currentUserId}
+                  onPrefetch={prefetchChatMessages}
+                />
+              </li>
+            ))}
           </ul>
+        ) : null}
+
+        {!isLoading && totalUnreadMessages > 0 ? (
+          <p className="sr-only" aria-live="polite">
+            {totalUnreadMessages} unread messages across your conversations
+          </p>
         ) : null}
       </div>
     </div>

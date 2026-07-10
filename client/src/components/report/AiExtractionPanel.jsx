@@ -137,14 +137,3 @@ export function AiExtractionPanel({ analyze, isLoading, error }) {
     </div>
   );
 }
-
-/** @deprecated Use AiExtractionPanel — kept for imports during migration */
-export function OcrResultsPanel({ ocrResult, isLoading, error }) {
-  return (
-    <AiExtractionPanel
-      analyze={ocrResult ? { ocr: ocrResult, objectDetection: { detectedObjects: [] } } : null}
-      isLoading={isLoading}
-      error={error}
-    />
-  );
-}

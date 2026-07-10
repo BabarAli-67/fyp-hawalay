@@ -11,21 +11,11 @@ export const CATEGORIES = [
 
 export const BRAND_SUGGESTIONS = ['Apple', 'Samsung', 'Nike', 'Lenovo', 'Sony', 'HP', 'Dell', 'Adidas'];
 
-export const DESCRIPTION_MODES = [
-  { value: 'manual', label: 'Write yourself' },
-  { value: 'ai', label: 'Extract from Image' },
+export const CONDITION_OPTIONS = [
+  { value: '', label: 'Not specified' },
+  { value: 'Excellent', label: 'Excellent' },
+  { value: 'Good', label: 'Good' },
+  { value: 'Fair', label: 'Fair' },
+  { value: 'Worn', label: 'Worn' },
+  { value: 'Damaged', label: 'Damaged' },
 ];
-
-export const FEATURES_MODES = [
-  { value: 'manual', label: 'Write yourself' },
-  { value: 'ai', label: 'Extract from Image' },
-];
-
-export const REPORT_STEPS = [
-  { id: 1, label: 'Basic info' },
-  { id: 2, label: 'Item details' },
-  { id: 3, label: 'Location' },
-  { id: 4, label: 'Review' },
-];
-
-export const TOTAL_REPORT_STEPS = REPORT_STEPS.length;

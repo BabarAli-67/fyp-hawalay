@@ -1,11 +1,10 @@
 import { jwtDecode } from 'jwt-decode';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'react-toastify';
 import axiosInstance from '../api/axiosInstance.js';
 import { fetchAndCacheChatRooms } from '../api/chatService.js';
 import { connectMatchSocket, disconnectMatchSocket } from '../socket/matchSocket.js';
 import { clearChatCache } from '../utils/chatCache.js';
-import { countUnreadChatRooms } from '../utils/chatUnread.js';
+import { countInboxUnread } from '../utils/chatInboxFilters.js';
 
 const AUTH_TOKEN_KEY = 'auth_token';
 const AUTH_USER_KEY = 'auth_user';
@@ -120,7 +119,7 @@ export function AuthProvider({ children }) {
 
     const promise = fetchAndCacheChatRooms()
       .then((rooms) => {
-        setChatUnreadCount(countUnreadChatRooms(rooms, userId));
+        setChatUnreadCount(countInboxUnread(rooms));
         return rooms;
       })
       .catch(() => {
@@ -205,17 +204,9 @@ export function AuthProvider({ children }) {
       fetchChatInbox();
     }
 
-    function handleMatchFound(event) {
-      const payload = event.detail ?? {};
-      const title = payload.title ? String(payload.title).trim() : '';
-      toast.success(
-        title
-          ? `New match found for your item — ${title}!`
-          : 'New match found for your item!',
-      );
+    function handleMatchFound() {
       fetchUnreadCount();
       fetchChatInbox();
-      window.dispatchEvent(new CustomEvent('hawalay:refresh-matches', { detail: payload }));
     }
 
     function handleUnreadRefetch() {

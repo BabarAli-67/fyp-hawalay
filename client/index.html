@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html class="light" lang="en">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -16,6 +16,27 @@
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/icon.svg" />
     <title>Hawalay</title>
+    <script>
+      (function () {
+        var STORAGE_KEY = 'hawalay-theme';
+        var stored = null;
+        try {
+          stored = localStorage.getItem(STORAGE_KEY);
+        } catch (e) {}
+        var theme =
+          stored === 'light' || stored === 'dark'
+            ? stored
+            : window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        document.documentElement.classList.add(theme);
+        document.documentElement.style.colorScheme = theme;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) {
+          meta.content = theme === 'dark' ? '#101414' : '#006c49';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

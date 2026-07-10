@@ -37,7 +37,7 @@ async function markMessagesReadByUser(matchId, readerUserId) {
   const unread = await Message.find({
     chatRoomId: roomObjectId,
     senderId: { $ne: readerObjectId },
-    readBy: { $ne: readerObjectId },
+    readBy: { $nin: [readerObjectId] },
   })
     .select('_id')
     .lean();

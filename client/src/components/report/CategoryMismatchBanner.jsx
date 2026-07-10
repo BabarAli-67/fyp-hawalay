@@ -72,29 +72,3 @@ export function CategoryMismatchBanner({
     </div>
   );
 }
-
-/**
- * Persistent reminder after user dismisses the banner but keeps a mismatched category.
- */
-export function CategoryMismatchReminder({ userCategory, suggestedCategory, detectedClassName }) {
-  if (!suggestedCategory || suggestedCategory === userCategory) {
-    return null;
-  }
-
-  const objectLabel = detectedClassName
-    ? detectedClassName.replace(/_/g, ' ')
-    : 'this item';
-
-  return (
-    <div
-      className="rounded-lg border border-amber-500/30 bg-amber-50/80 dark:bg-amber-950/20 px-md py-sm"
-      role="status"
-    >
-      <p className="font-caption text-amber-950 dark:text-amber-100">
-        Category mismatch: you selected <strong>{userCategory}</strong>, but AI detected{' '}
-        <strong>{objectLabel}</strong> as <strong>{suggestedCategory}</strong>. Please edit the
-        category on step 1 before submitting — otherwise matching and search may miss your item.
-      </p>
-    </div>
-  );
-}

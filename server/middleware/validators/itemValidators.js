@@ -2,7 +2,7 @@ const { body, param, query } = require('express-validator');
 
 const CATEGORIES = ['Electronics', 'Clothing', 'Documents', 'Accessories', 'Other'];
 const REPORT_TYPES = ['lost', 'found'];
-const STATUSES = ['active', 'claimed', 'expired'];
+const STATUSES = ['active', 'claimed', 'expired', 'returned'];
 const CONTACT_PREFERENCES = ['in_app_chat', 'show_email'];
 
 const createItemValidation = [

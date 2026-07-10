@@ -155,7 +155,7 @@ export default function ResetPasswordPage() {
           </div>
         ) : null}
 
-        <div className="w-full max-w-md glass-panel p-xl rounded-xl shadow-lg border border-white/50">
+        <div className="w-full max-w-md glass-panel p-xl rounded-xl shadow-lg border border-outline-variant/30">
           {resetComplete ? (
             <div className="space-y-lg text-center">
               <p className="font-body-md text-on-surface-variant">{successMessage}</p>

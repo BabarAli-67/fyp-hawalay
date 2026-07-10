@@ -1,8 +1,9 @@
 import { openDB as openIdb } from 'idb';
 
 export const DB_NAME = 'lostfound-db';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 export const STORE_NAME = 'offline_queue';
+export const DRAFT_STORE_NAME = 'report_drafts';
 
 let dbPromise;
 
@@ -16,6 +17,9 @@ export function openDB() {
       upgrade(db) {
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: false });
+        }
+        if (!db.objectStoreNames.contains(DRAFT_STORE_NAME)) {
+          db.createObjectStore(DRAFT_STORE_NAME, { keyPath: 'userId' });
         }
       },
     });
@@ -64,6 +68,9 @@ export function openQueueDBRaw() {
       const db = event.target.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: false });
+      }
+      if (!db.objectStoreNames.contains('report_drafts')) {
+        db.createObjectStore('report_drafts', { keyPath: 'userId' });
       }
     };
   });

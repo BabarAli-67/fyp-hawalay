@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axiosInstance from '../api/axiosInstance.js';
+import { getMatchesForItem } from '../api/matchesService.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { ReturnVerificationPanel } from '../components/matches/ReturnVerificationPanel.jsx';
 import { Badge } from '../components/ui/Badge.jsx';
 import { EmptyState } from '../components/ui/EmptyState.jsx';
 import { ItemImage } from '../components/items/ItemImage.jsx';
 import { Spinner } from '../components/ui/Spinner.jsx';
+import { recordRecentlyViewed } from '../utils/recentlyViewed.js';
 
 function formatItemDate(value) {
   if (!value) return '—';
@@ -21,6 +24,7 @@ function formatItemDate(value) {
 }
 
 function statusLabel(status) {
+  if (status === 'returned') return 'Returned';
   if (status === 'claimed') return 'Claimed';
   if (status === 'expired') return 'Expired';
   return 'Active';
@@ -33,25 +37,66 @@ export default function ItemDetailsPage() {
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [matchContext, setMatchContext] = useState(null);
 
-  useEffect(() => {
+  async function loadItem() {
     if (!id) return;
     setLoading(true);
     setError(null);
-    axiosInstance
-      .get(`/api/items/${id}`)
-      .then((res) => setItem(res.data))
-      .catch((err) => {
-        setItem(null);
-        setError(err?.response?.data?.error ?? 'Could not load this report.');
-      })
-      .finally(() => setLoading(false));
+    try {
+      const res = await axiosInstance.get(`/api/items/${id}`);
+      setItem(res.data);
+    } catch (err) {
+      setItem(null);
+      setError(err?.response?.data?.error ?? 'Could not load this report.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadItem();
   }, [id]);
+
+  const currentUserId = user?._id ? String(user._id) : '';
+  const isOwner = Boolean(item?.ownerId && currentUserId && String(item.ownerId) === currentUserId);
+
+  useEffect(() => {
+    if (!item?._id) return;
+    const userId = user?._id ?? user?.id;
+    if (!userId) return;
+    recordRecentlyViewed(userId, item);
+  }, [item, user]);
+
+  useEffect(() => {
+    if (!isOwner || !item?._id) {
+      setMatchContext(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    getMatchesForItem(item._id)
+      .then((data) => {
+        if (cancelled) return;
+        const matches = Array.isArray(data?.matches) ? data.matches : [];
+        const actionable =
+          matches.find((match) => match.returnVerification?.userRole && !match.returnVerification?.returnCompleted) ||
+          matches.find((match) => match.returnVerification?.userRole) ||
+          null;
+        setMatchContext(actionable);
+      })
+      .catch(() => {
+        if (!cancelled) setMatchContext(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOwner, item?._id, item?.status]);
 
   const reportVariant = item?.reportType === 'found' ? 'found' : 'lost';
   const reportLabel = item?.reportType === 'found' ? 'FOUND' : 'LOST';
-  const currentUserId = user?._id ? String(user._id) : '';
-  const isOwner = Boolean(item?.ownerId && currentUserId && String(item.ownerId) === currentUserId);
 
   return (
     <div className="bg-background text-on-background min-h-screen pb-24">
@@ -164,10 +209,36 @@ export default function ItemDetailsPage() {
               ) : null}
             </section>
 
-            <div className="flex flex-col items-center gap-sm mt-lg pb-8">
+            <div className="flex flex-col items-center gap-sm mt-lg pb-8 w-full">
+              {matchContext?.returnVerification?.userRole ? (
+                <div className="w-full max-w-lg">
+                  <ReturnVerificationPanel
+                    matchId={matchContext.matchId}
+                    returnVerification={matchContext.returnVerification}
+                    onUpdated={(next) => {
+                      setMatchContext((prev) =>
+                        prev ? { ...prev, returnVerification: next } : prev,
+                      );
+                      if (next?.returnCompleted) {
+                        loadItem();
+                      }
+                    }}
+                  />
+                  {matchContext.matchId ? (
+                    <Link
+                      to={`/chat/${matchContext.matchId}`}
+                      className="mt-sm inline-flex items-center justify-center gap-xs font-label-sm text-primary hover:underline w-full"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">chat</span>
+                      Open match chat
+                    </Link>
+                  ) : null}
+                </div>
+              ) : null}
+
               {isOwner ? (
                 <Link
-                  to={`/matches/ai/${item._id}`}
+                  to="/my-matches"
                   className="font-label-sm text-primary hover:underline"
                 >
                   View smart matches for this item
@@ -177,12 +248,14 @@ export default function ItemDetailsPage() {
                   Smart matches are only available on your own reports.
                 </p>
               )}
-              <p className="font-caption text-on-surface-variant text-center">
-                Contact options and claiming will be available in a future release.{' '}
-                <Link to="/matches" className="text-primary underline">
-                  Browse more reports
-                </Link>
-              </p>
+              {!matchContext?.returnVerification?.userRole ? (
+                <p className="font-caption text-on-surface-variant text-center">
+                  Coordinate return details in match chat once you connect with the other party.{' '}
+                  <Link to="/matches" className="text-primary underline">
+                    Browse more reports
+                  </Link>
+                </p>
+              ) : null}
             </div>
           </>
         )}

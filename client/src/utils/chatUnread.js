@@ -4,6 +4,7 @@
 
 export function isRoomUnread(room, userId) {
   if (!room || !userId) return false;
+  if (typeof room.unreadCount === 'number') return room.unreadCount > 0;
   if (typeof room.unread === 'boolean') return room.unread;
 
   const uid = String(userId);

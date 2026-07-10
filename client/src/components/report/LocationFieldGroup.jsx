@@ -14,18 +14,27 @@ export function LocationFieldGroup({
   isLocating = false,
   error,
   optional = false,
+  showUseMyLocation = true,
+  hideSectionLabel = false,
 }) {
   const mapMarkerPosition = coordinates ? geoJsonToLeaflet(coordinates) : null;
   const inputId = `${formId}-${label.replace(/\s+/g, '-').toLowerCase()}`;
+  const mapHint = coordinates
+    ? 'Pinned — tap map to move'
+    : showUseMyLocation
+      ? 'Tap the map or use My location'
+      : 'Tap the map to set a pin';
 
   return (
     <div className="space-y-sm">
-      <label className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider">
-        {label}
-        {optional ? (
-          <span className="normal-case text-on-surface-variant font-caption"> (optional)</span>
-        ) : null}
-      </label>
+      {hideSectionLabel ? null : (
+        <label className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider">
+          {label}
+          {optional ? (
+            <span className="normal-case text-on-surface-variant font-caption"> (optional)</span>
+          ) : null}
+        </label>
+      )}
       <div className="relative rounded-xl overflow-hidden shadow-sm border border-outline-variant">
         <Map
           height="10rem"
@@ -34,22 +43,24 @@ export function LocationFieldGroup({
           markerPopup={locationName.trim() || label}
           onMapClick={onMapSelect}
         />
-        <div className="absolute top-2 right-2 z-[1000]">
-          <button
-            type="button"
-            onClick={onUseMyLocation}
-            disabled={isLocating}
-            className="bg-surface/95 backdrop-blur-md px-sm py-xs rounded-lg shadow-md font-label-sm text-primary flex items-center gap-xs active:scale-95 transition-transform disabled:opacity-60"
-          >
-            <span className="material-symbols-outlined text-[18px]">
-              {isLocating ? 'progress_activity' : 'my_location'}
-            </span>
-            {isLocating ? 'Locating…' : 'My location'}
-          </button>
-        </div>
+        {showUseMyLocation ? (
+          <div className="absolute top-2 right-2 z-[1000]">
+            <button
+              type="button"
+              onClick={onUseMyLocation}
+              disabled={isLocating}
+              className="bg-surface/95 backdrop-blur-md px-sm py-xs rounded-lg shadow-md font-label-sm text-primary flex items-center gap-xs active:scale-95 transition-transform disabled:opacity-60"
+            >
+              <span className="material-symbols-outlined text-[18px]">
+                {isLocating ? 'progress_activity' : 'my_location'}
+              </span>
+              {isLocating ? 'Locating…' : 'My location'}
+            </button>
+          </div>
+        ) : null}
         <div className="absolute bottom-2 left-2 right-2 z-[1000] pointer-events-none">
           <p className="text-caption text-on-surface bg-surface/90 backdrop-blur-md px-sm py-xs rounded-lg shadow-sm truncate">
-            {coordinates ? 'Pinned — tap map to move' : 'Tap the map or use My location'}
+            {mapHint}
           </p>
         </div>
       </div>
