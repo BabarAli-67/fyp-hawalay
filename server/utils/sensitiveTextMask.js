@@ -25,8 +25,8 @@ const CVC_LABEL_PATTERN = /\b(cvv|cvc|security code)\s*[:#-]?\s*(\d{3,4})\b/gi;
  */
 function maskDigitSequence(digits) {
   const normalized = String(digits).replace(/\D/g, '');
-  if (normalized.length <= 4) return normalized;
-  return `${'*'.repeat(normalized.length - 4)}${normalized.slice(-4)}`;
+  if (normalized.length <= 3) return normalized;
+  return `${'*'.repeat(normalized.length - 3)}${normalized.slice(-3)}`;
 }
 
 /**
