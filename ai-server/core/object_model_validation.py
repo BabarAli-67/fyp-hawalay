@@ -4,7 +4,7 @@ Validate object_v1 artifact bundle at startup (plug-and-play model swap).
 Artifacts (single source of truth):
   - class_names.json  — model class labels
   - category_map.json — class name → report category
-  - weights/hawaly_model_final.keras — Keras weights (path from OBJECT_MODEL_PATH)
+  - weights/hawalay_final_model.keras — Keras weights (path from OBJECT_MODEL_PATH)
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class ObjectModelValidationReport:
             )
         elif not self.errors and not self.warnings:
             logger.info(
-                "[object_v1] not deployed — add hawaly_model_final.keras, class_names.json, and "
+                "[object_v1] not deployed — add hawalay_final_model.keras, class_names.json, and "
                 "category_map.json then restart (no code changes required)",
             )
 
@@ -72,7 +72,7 @@ def validate_object_model_artifacts(
         if class_names_exists or category_map_exists:
             report.warnings.append(
                 f"weights missing at {weights_path} but JSON artifact(s) present — "
-                "object detector will stay unavailable until hawaly_model_final.keras is added",
+                "object detector will stay unavailable until hawalay_final_model.keras is added",
             )
         return report
 

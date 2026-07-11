@@ -41,7 +41,7 @@ async def detect_objects(
     """
     Upload an image (multipart/form-data).
 
-    **Pipeline:** Keras ``object_v1/weights/hawaly_model_final.keras`` → category_map.json → Gemini caption.
+    **Pipeline:** Keras ``object_v1/weights/hawalay_final_model.keras`` → category_map.json → Gemini caption.
 
     **Partial success:** detections are returned if Gemini fails; caption is returned if
     detection fails but Gemini succeeds.

@@ -1,22 +1,15 @@
 ﻿[
-  "box",
+  "KEY",
+  "books",
   "computer",
-  "earrings",
-  "flash drive",
+  "earings",
   "glasses",
-  "hand bag",
+  "handbag",
   "headphones",
-  "jewelry",
-  "key",
   "laptop",
-  "makeup",
   "mobile",
   "necklace",
-  "pen",
   "phone",
-  "ring",
-  "shoulder bag",
-  "tool",
   "wallet",
-  "wrist watch"
+  "wristwatch"
 ]

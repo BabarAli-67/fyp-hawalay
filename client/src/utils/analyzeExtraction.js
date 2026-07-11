@@ -396,6 +396,41 @@ const REPORT_CATEGORIES = new Set([
   'Other',
 ]);
 
+/** Caption keywords for category when server OCR misroutes (e.g. keys → Documents). */
+const CAPTION_CATEGORY_RULES = [
+  {
+    patterns: [/\bkeys?\b/i, /\bkeychain\b/i, /\bkey ring\b/i, /\bkey set\b/i, /\bhouse keys?\b/i],
+    category: 'Other',
+  },
+  {
+    patterns: [/\b(wallet|purse)\b/i],
+    category: 'Accessories',
+  },
+  {
+    patterns: [/\b(watch|wristwatch|wrist watch)\b/i],
+    category: 'Accessories',
+  },
+];
+
+function pickCategoryFromCaptionKeywords(analyze) {
+  if (!analyze) return null;
+  const text = [
+    analyze.caption,
+    analyze.distinctiveFeatures,
+    ...(analyze.featurePoints || []),
+  ]
+    .filter(Boolean)
+    .join(' ');
+  if (!text.trim()) return null;
+
+  for (const rule of CAPTION_CATEGORY_RULES) {
+    if (rule.patterns.some((pattern) => pattern.test(text))) {
+      return rule.category;
+    }
+  }
+  return null;
+}
+
 /**
  * Condition hints parsed from Gemini caption / feature text (UI-only field).
  * Order matters: more specific damage terms before generic "good".
@@ -454,9 +489,27 @@ const CONDITION_HINTS = [
  * @returns {string | null}
  */
 export function pickCategoryFromAnalyze(analyze) {
-  if (!analyze?.suggestedCategory) return null;
-  const category = String(analyze.suggestedCategory).trim();
-  return REPORT_CATEGORIES.has(category) ? category : null;
+  if (!analyze) return null;
+
+  const fromCaption = pickCategoryFromCaptionKeywords(analyze);
+  const suggested = analyze.suggestedCategory
+    ? String(analyze.suggestedCategory).trim()
+    : null;
+
+  // Prefer caption keywords over a false Documents suggestion from noisy OCR.
+  if (fromCaption && suggested === 'Documents') {
+    return REPORT_CATEGORIES.has(fromCaption) ? fromCaption : null;
+  }
+
+  if (suggested && REPORT_CATEGORIES.has(suggested)) {
+    return suggested;
+  }
+
+  if (fromCaption && REPORT_CATEGORIES.has(fromCaption)) {
+    return fromCaption;
+  }
+
+  return null;
 }
 
 /**

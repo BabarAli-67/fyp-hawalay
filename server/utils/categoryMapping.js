@@ -4,7 +4,7 @@
  * Single source of truth (shared with ai-server):
  *   - class_names.json
  *   - category_map.json
- *   - weights/hawaly_model_final.keras (validated for deployment readiness)
+ *   - weights/hawalay_final_model.keras (validated for deployment readiness)
  *
  * Replace artifact files and restart — no code changes required.
  */
@@ -23,7 +23,7 @@ const DEFAULT_WEIGHTS = path.join(
   'artifacts',
   'object_v1',
   'weights',
-  'hawaly_model_final.keras',
+  'hawalay_final_model.keras',
 );
 const DEFAULT_CLASS_NAMES = path.join(
   REPO_ROOT,
@@ -114,11 +114,11 @@ function initializeObjectModelConfig() {
     if (classNamesExists || categoryMapExists) {
       console.warn(
         `[object_v1] weights missing at ${weightsPath} but JSON artifact(s) present — ` +
-          'object detector will stay unavailable until hawaly_model_final.keras is added',
+          'object detector will stay unavailable until hawalay_final_model.keras is added',
       );
     } else {
       console.info(
-        '[object_v1] not deployed — add hawaly_model_final.keras, class_names.json, and category_map.json then restart',
+        '[object_v1] not deployed — add hawalay_final_model.keras, class_names.json, and category_map.json then restart',
       );
     }
     return { ready: false, classCount: 0, weightsPath, classNamesPath, categoryMapPath };
@@ -246,6 +246,39 @@ const OCR_CATEGORY_CONFIDENCE_THRESHOLD = Number(
   process.env.OCR_CATEGORY_CONFIDENCE_THRESHOLD || 0.35,
 );
 
+const OBJECT_CATEGORY_CONFIDENCE_THRESHOLD = Number(
+  process.env.OBJECT_CATEGORY_CONFIDENCE_THRESHOLD || 0.55,
+);
+
+/** Caption / feature keywords → report category (non-document personal items). */
+const CAPTION_CATEGORY_RULES = [
+  {
+    patterns: [/\bkeys?\b/i, /\bkeychain\b/i, /\bkey ring\b/i, /\bkey set\b/i, /\bhouse keys?\b/i],
+    category: 'Other',
+    label: 'keys',
+  },
+  {
+    patterns: [/\b(wallet|purse)\b/i],
+    category: 'Accessories',
+    label: 'wallet',
+  },
+  {
+    patterns: [/\b(watch|wristwatch|wrist watch)\b/i],
+    category: 'Accessories',
+    label: 'watch',
+  },
+  {
+    patterns: [/\b(glasses|eyeglasses|sunglasses)\b/i],
+    category: 'Accessories',
+    label: 'glasses',
+  },
+  {
+    patterns: [/\b(backpack|handbag|shoulder bag|bag)\b/i],
+    category: 'Accessories',
+    label: 'bag',
+  },
+];
+
 /**
  * @param {object | null | undefined} ocr
  */
@@ -273,16 +306,93 @@ function ocrHasCardFields(ocr) {
 
 /**
  * @param {object | null | undefined} ocr
+ * @param {{ allowInferredCard?: boolean }} [options]
  * @returns {string | null}
  */
-function resolveOcrDocumentType(ocr) {
+function resolveOcrDocumentType(ocr, { allowInferredCard = false } = {}) {
   if (!ocr || typeof ocr !== 'object') return null;
   const docType = String(ocr.document_type || ocr.documentType || 'unknown')
     .trim()
     .toLowerCase();
   if (OCR_DOCUMENT_TYPES.has(docType)) return docType;
-  if (docType === 'unknown' && ocrHasCardFields(ocr)) return 'credit_card';
+  if (allowInferredCard && docType === 'unknown' && ocrHasCardFields(ocr)) {
+    return 'credit_card';
+  }
   return null;
+}
+
+function isSensitiveAnalyzePayload(analyzePayload) {
+  if (!analyzePayload || typeof analyzePayload !== 'object') return false;
+  return analyzePayload.is_sensitive === true || analyzePayload.isSensitive === true;
+}
+
+/**
+ * Collect caption / feature text from analyze payload for keyword category rules.
+ * @param {object | null | undefined} analyzePayload
+ */
+function collectAnalyzeCategoryText(analyzePayload) {
+  if (!analyzePayload || typeof analyzePayload !== 'object') return '';
+  return [
+    analyzePayload.caption,
+    analyzePayload.distinctive_features,
+    analyzePayload.distinctiveFeatures,
+    ...(Array.isArray(analyzePayload.feature_points)
+      ? analyzePayload.feature_points
+      : []),
+    ...(Array.isArray(analyzePayload.featurePoints) ? analyzePayload.featurePoints : []),
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * Suggest category from Gemini caption / feature bullets (keys, wallet, etc.).
+ * @param {object | null | undefined} analyzePayload
+ */
+function suggestCategoryFromAnalyzeText(analyzePayload) {
+  const text = collectAnalyzeCategoryText(analyzePayload);
+  if (!text.trim()) return null;
+
+  for (const rule of CAPTION_CATEGORY_RULES) {
+    if (rule.patterns.some((pattern) => pattern.test(text))) {
+      return {
+        category: rule.category,
+        confidence: 0.72,
+        source: 'analyze_text',
+        documentType: null,
+        label: rule.label,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {Array<{ className?: string, confidence?: number }>} detectedObjects
+ */
+function getObjectCategorySuggestion(detectedObjects) {
+  if (!objectModelReady || !detectedObjects?.length) return null;
+
+  const best = detectedObjects.reduce((top, item) => {
+    const conf = Number(item?.confidence ?? 0);
+    if (!top || conf > top.confidence) {
+      return { className: item?.className || '', confidence: conf };
+    }
+    return top;
+  }, null);
+
+  if (!best?.className) return null;
+
+  const category = categoryMap[best.className];
+  if (!REPORT_CATEGORIES.includes(category)) return null;
+
+  return {
+    category,
+    confidence: Number(best.confidence ?? 0),
+    source: 'object_v1',
+    documentType: null,
+    label: best.className.replace(/_/g, ' '),
+  };
 }
 
 /**
@@ -305,11 +415,11 @@ function getOcrCategoryConfidence(ocr) {
  * @param {object | null | undefined} ocrOrAnalyze
  * @returns {string | null}
  */
-function suggestCategoryFromOcr(ocrOrAnalyze) {
+function suggestCategoryFromOcr(ocrOrAnalyze, { allowInferredCard = false } = {}) {
   const ocr = extractOcrBlock(ocrOrAnalyze);
   if (!ocr || ocr.success !== true) return null;
 
-  const documentType = resolveOcrDocumentType(ocr);
+  const documentType = resolveOcrDocumentType(ocr, { allowInferredCard });
   if (!documentType) return null;
 
   const confidence = getOcrCategoryConfidence(ocr);
@@ -325,12 +435,12 @@ function suggestCategoryFromOcr(ocrOrAnalyze) {
  *
  * @param {object | null | undefined} ocrOrAnalyze
  */
-function getOcrCategorySuggestion(ocrOrAnalyze) {
+function getOcrCategorySuggestion(ocrOrAnalyze, { allowInferredCard = false } = {}) {
   const ocr = extractOcrBlock(ocrOrAnalyze);
-  const category = suggestCategoryFromOcr(ocr);
+  const category = suggestCategoryFromOcr(ocr, { allowInferredCard });
   if (!category) return null;
 
-  const documentType = resolveOcrDocumentType(ocr);
+  const documentType = resolveOcrDocumentType(ocr, { allowInferredCard });
   return {
     category,
     confidence: getOcrCategoryConfidence(ocr),
@@ -341,8 +451,14 @@ function getOcrCategorySuggestion(ocrOrAnalyze) {
 }
 
 /**
- * Merge OCR (Documents for cards/IDs) and object_v1 suggestions.
- * OCR takes priority when both apply — card uploads should not use object class.
+ * Merge OCR, object_v1, and caption keyword suggestions.
+ *
+ * Priority:
+ * 1. Sensitive documents → OCR Documents (IDs / cards)
+ * 2. Confident object_v1 detection
+ * 3. Caption / feature keywords (keys, wallet, etc.)
+ * 4. OCR Documents (explicit document type, or inferred card fields when sensitive)
+ * 5. Low-confidence object_v1
  *
  * @param {{
  *   detectedObjects?: Array<{ className?: string, confidence?: number }>,
@@ -352,29 +468,32 @@ function getOcrCategorySuggestion(ocrOrAnalyze) {
  */
 function resolveSuggestedCategory({ detectedObjects = [], ocr = null, analyzePayload = null }) {
   const ocrBlock = extractOcrBlock(ocr || analyzePayload);
-  const ocrSuggestion = getOcrCategorySuggestion(ocrBlock);
-  if (ocrSuggestion) {
-    return ocrSuggestion;
+  const sensitive = isSensitiveAnalyzePayload(analyzePayload);
+
+  if (sensitive) {
+    const sensitiveOcr = getOcrCategorySuggestion(ocrBlock, { allowInferredCard: true });
+    if (sensitiveOcr) return sensitiveOcr;
   }
 
-  const objectCategory = suggestCategoryFromDetections(detectedObjects);
-  if (!objectCategory) return null;
+  const objectSuggestion = getObjectCategorySuggestion(detectedObjects);
+  if (
+    objectSuggestion &&
+    objectSuggestion.confidence >= OBJECT_CATEGORY_CONFIDENCE_THRESHOLD
+  ) {
+    return objectSuggestion;
+  }
 
-  const best = detectedObjects.reduce((top, item) => {
-    const conf = Number(item?.confidence ?? 0);
-    if (!top || conf > top.confidence) {
-      return { className: item?.className || '', confidence: conf };
-    }
-    return top;
-  }, null);
+  const textSuggestion = suggestCategoryFromAnalyzeText(analyzePayload);
+  if (textSuggestion) return textSuggestion;
 
-  return {
-    category: objectCategory,
-    confidence: Number(best?.confidence ?? 0),
-    source: 'object_v1',
-    documentType: null,
-    label: best?.className ? best.className.replace(/_/g, ' ') : null,
-  };
+  const ocrSuggestion = getOcrCategorySuggestion(ocrBlock, {
+    allowInferredCard: sensitive,
+  });
+  if (ocrSuggestion) return ocrSuggestion;
+
+  if (objectSuggestion) return objectSuggestion;
+
+  return null;
 }
 
 /**
@@ -411,7 +530,9 @@ module.exports = {
   isObjectModelReady,
   suggestCategoryFromDetections,
   suggestCategoryFromOcr,
+  suggestCategoryFromAnalyzeText,
   getOcrCategorySuggestion,
+  getObjectCategorySuggestion,
   resolveSuggestedCategory,
   getOcrCategoryConfidence,
   OCR_DOCUMENT_TYPES,

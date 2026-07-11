@@ -1,7 +1,7 @@
 """
 Keras object classifier lifecycle for object_v1.
 
-Loads ``hawaly_model_final.keras`` (InceptionV3-style, 299×299, TensorFlow/Keras) —
+Loads ``hawalay_final_model.keras`` (InceptionV3-style, 299×299, TensorFlow/Keras) —
 separate from the OCR YOLO detector in ``yolo_detector.py``.
 
 TensorFlow is imported lazily so the server starts when the model file is absent.
@@ -17,7 +17,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_KERAS_WEIGHTS_NAME = "hawaly_model_final.keras"
+DEFAULT_KERAS_WEIGHTS_NAME = "hawalay_final_model.keras"
 
 
 class KerasObjectDetector:
@@ -268,7 +268,7 @@ class KerasObjectDetector:
 
         num_classes = len(self._class_names) or probs.size
         if num_classes and probs.size > num_classes:
-            # Model may still expose a removed class (e.g. credit_card at index 20).
+            # Model may expose more logits than class_names.json (extra indices are ignored).
             probs = probs[:num_classes]
             if probs.sum() > 0:
                 probs = probs / probs.sum()

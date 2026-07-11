@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     easyocr_langs: str = Field(default="en", alias="EASYOCR_LANGS")
     easyocr_use_gpu: bool = Field(default=False, alias="EASYOCR_USE_GPU")
 
-    # object_v1 — 20-class Keras classifier (separate from card OCR YOLO)
+    # object_v1 — 13-class Keras classifier (separate from card OCR YOLO)
     object_model_path: str | None = Field(default=None, alias="OBJECT_MODEL_PATH")
     object_class_names_path: str | None = Field(default=None, alias="OBJECT_CLASS_NAMES_PATH")
     object_category_map_path: str | None = Field(default=None, alias="OBJECT_CATEGORY_MAP_PATH")
@@ -117,7 +117,7 @@ class Settings(BaseSettings):
             / "artifacts"
             / "object_v1"
             / "weights"
-            / "hawaly_model_final.keras"
+            / "hawalay_final_model.keras"
         )
 
     def expected_object_class_names_path(self) -> Path:

@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=7860 \
     ENVIRONMENT=production \
     YOLO_WEIGHTS_PATH=/app/artifacts/ocr/weights/best.pt \
-    OBJECT_MODEL_PATH=/app/artifacts/object_v1/weights/hawaly_model_final.keras
+    OBJECT_MODEL_PATH=/app/artifacts/object_v1/weights/hawalay_final_model.keras
 
 # OpenCV + EasyOCR runtime libraries (libgl1 replaces obsolete libgl1-mesa-glx on Debian 12+)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -31,7 +31,7 @@ COPY . .
 
 # If weights are present locally at build time (not in git), uncomment:
 # COPY artifacts/ocr/weights/best.pt artifacts/ocr/weights/best.pt
-# COPY artifacts/object_v1/weights/hawaly_model_final.keras artifacts/object_v1/weights/hawaly_model_final.keras
+# COPY artifacts/object_v1/weights/hawalay_final_model.keras artifacts/object_v1/weights/hawalay_final_model.keras
 
 EXPOSE 7860
 
