@@ -14,9 +14,8 @@ node_modules/
 **/.env
 **/.env.local
 **/.env.*.local
-
-# --- Build outputs (generated on CI / deploy) ---
-client/dist/
+/Flow0-1.pdf
+/Flow0-1.md
 dist/
 build/
 *.tsbuildinfo
