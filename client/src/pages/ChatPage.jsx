@@ -124,6 +124,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [participants, setParticipants] = useState([]);
   const [returnVerification, setReturnVerification] = useState(null);
+  const [isChatLocked, setIsChatLocked] = useState(false);
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -216,12 +217,14 @@ export default function ChatPage() {
       setMessages(dedupeMessagesById(cached.messages.map(normalizeApiMessage)));
       setParticipants(cached.participants);
       setReturnVerification(cached.returnVerification ?? null);
+      setIsChatLocked(Boolean(cached.returnVerification?.returnCompleted));
       setIsLoading(false);
       setIsRefreshing(true);
     } else {
       setMessages([]);
       setParticipants([]);
       setReturnVerification(null);
+      setIsChatLocked(false);
       setIsLoading(true);
       setIsRefreshing(false);
     }
@@ -243,6 +246,7 @@ export default function ChatPage() {
         setMessages(freshMessages);
         setParticipants(freshParticipants);
         setReturnVerification(freshReturn);
+        setIsChatLocked(Boolean(freshReturn?.returnCompleted));
         if (matchId) {
           setCachedMessages(matchId, { ...data, returnVerification: freshReturn });
         }
@@ -287,10 +291,16 @@ export default function ChatPage() {
       const data = await fetchAndCacheMessages(roomId);
       if (generation !== reconnectGenerationRef.current) return;
 
-      const { messages: serverMessages, participants: freshParticipants } =
+      const {
+        messages: serverMessages,
+        participants: freshParticipants,
+        returnVerification: freshReturn,
+      } =
         applyServerHistory(data);
       setMessages((prev) => mergeMessageLists(prev, serverMessages));
       setParticipants(freshParticipants);
+      setReturnVerification(freshReturn);
+      setIsChatLocked(Boolean(freshReturn?.returnCompleted));
       setLoadError(null);
     } catch {
       if (generation !== reconnectGenerationRef.current) return;
@@ -317,6 +327,12 @@ export default function ChatPage() {
 
     const onJoined = (payload) => {
       if (String(payload?.matchId) !== String(matchId)) return;
+      if (payload?.locked) {
+        setIsChatLocked(true);
+        setReturnVerification((current) =>
+          current ? { ...current, returnCompleted: true, canConfirm: false } : current,
+        );
+      }
       markRead();
     };
 
@@ -427,19 +443,43 @@ export default function ChatPage() {
     const handleChatError = (payload) => {
       if (payload?.code === 'UNAUTHORIZED') {
         setAccessDenied(true);
+      } else if (
+        payload?.code === 'CHAT_LOCKED' &&
+        String(payload?.matchId) === String(matchId)
+      ) {
+        setIsChatLocked(true);
+        setDraft('');
+        setTypingLabel('');
+        setMessages((current) => current.filter((message) => !isPendingMessage(message)));
+        setReturnVerification((current) =>
+          current ? { ...current, returnCompleted: true, canConfirm: false } : current,
+        );
       }
+    };
+
+    const handleChatLocked = (payload) => {
+      if (String(payload?.matchId) !== String(matchId)) return;
+      setIsChatLocked(true);
+      setDraft('');
+      setTypingLabel('');
+      setMessages((current) => current.filter((message) => !isPendingMessage(message)));
+      setReturnVerification((current) =>
+        current ? { ...current, returnCompleted: true, canConfirm: false } : current,
+      );
     };
 
     socket.on('chat:message', handleMessage);
     socket.on('chat:typing', handleTyping);
     socket.on('chat:read', handleRead);
     socket.on('chat:error', handleChatError);
+    socket.on('chat:locked', handleChatLocked);
 
     return () => {
       socket.off('chat:message', handleMessage);
       socket.off('chat:typing', handleTyping);
       socket.off('chat:read', handleRead);
       socket.off('chat:error', handleChatError);
+      socket.off('chat:locked', handleChatLocked);
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = null;
@@ -457,10 +497,10 @@ export default function ChatPage() {
 
   const emitTyping = useCallback(
     (isTyping) => {
-      if (!socket?.connected || !matchId || accessDenied) return;
+      if (!socket?.connected || !matchId || accessDenied || isChatLocked) return;
       socket.emit('chat:typing', { matchId, isTyping });
     },
-    [socket, matchId, accessDenied],
+    [socket, matchId, accessDenied, isChatLocked],
   );
 
   function handleDraftChange(value) {
@@ -488,7 +528,7 @@ export default function ChatPage() {
   function handleSend(e) {
     e.preventDefault();
     const text = draft.trim();
-    if (!text || !socket || !matchId || accessDenied) return;
+    if (!text || !socket || !matchId || accessDenied || isChatLocked) return;
 
     emitTyping(false);
     if (typingStopRef.current) {
@@ -543,7 +583,7 @@ export default function ChatPage() {
       <div
         className={`fixed inset-x-0 z-30 flex flex-col overflow-hidden bg-surface text-on-surface font-body-md selection:bg-primary-container ${chatPanelTopClass} ${chatPanelBottomClass}`}
       >
-      <header className="flex h-16 shrink-0 items-center border-b border-outline-variant/20 bg-surface/70 px-margin-mobile shadow-sm backdrop-blur-lg dark:bg-inverse-surface/70">
+      <header className="flex h-16 shrink-0 items-center border-b border-outline-variant/20 bg-surface/70 px-margin-mobile shadow-sm backdrop-blur-lg">
         <div className="flex w-full items-center gap-3">
           <Link
             to="/chats"
@@ -566,6 +606,24 @@ export default function ChatPage() {
           </div>
         </div>
       </header>
+
+      {returnVerification?.userRole ? (
+        <div className="shrink-0 border-b border-outline-variant/20 bg-surface/70 px-gutter-mobile py-sm backdrop-blur-lg">
+          <ReturnVerificationPanel
+            matchId={matchId}
+            returnVerification={returnVerification}
+            onUpdated={(next) => {
+              setReturnVerification(next);
+              if (next?.returnCompleted) {
+                setIsChatLocked(true);
+                setDraft('');
+                setTypingLabel('');
+              }
+            }}
+            compact
+          />
+        </div>
+      ) : null}
 
       <main
         ref={listRef}
@@ -653,19 +711,22 @@ export default function ChatPage() {
       </main>
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-outline-variant/20 bg-surface/70 p-4 backdrop-blur-lg">
-        {returnVerification?.userRole ? (
-          <ReturnVerificationPanel
-            matchId={matchId}
-            returnVerification={returnVerification}
-            onUpdated={setReturnVerification}
-            compact
-          />
+        {isChatLocked ? (
+          <div
+            className="flex items-center justify-center gap-xs rounded-lg bg-surface-container-low px-md py-sm text-center"
+            role="status"
+          >
+            <span className="material-symbols-outlined text-[18px] text-primary">lock</span>
+            <span className="font-caption text-on-surface-variant">
+              This conversation is read-only because the item was returned.
+            </span>
+          </div>
         ) : null}
         <form onSubmit={handleSend} className="flex items-end gap-3">
           <div className="flex-1 relative flex items-center">
             <textarea
               className="w-full min-h-[48px] max-h-32 bg-surface-container-lowest border-none rounded-2xl px-4 py-3 text-on-surface placeholder:text-outline-variant focus:ring-2 focus:ring-primary/20 shadow-inner resize-none"
-              placeholder="Type a message..."
+              placeholder={isChatLocked ? 'Chat locked — item returned' : 'Type a message...'}
               rows={1}
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
@@ -676,13 +737,13 @@ export default function ChatPage() {
                 }
               }}
               onBlur={() => emitTyping(false)}
-              disabled={isLoading || Boolean(loadError)}
+              disabled={isLoading || Boolean(loadError) || isChatLocked}
               aria-label="Message"
             />
           </div>
           <button
             type="submit"
-            disabled={isLoading || Boolean(loadError) || !draft.trim()}
+            disabled={isLoading || Boolean(loadError) || isChatLocked || !draft.trim()}
             className="w-12 h-12 shrink-0 flex items-center justify-center rounded-full bg-primary text-on-primary shadow-lg shadow-primary/30 active:scale-90 transition-all disabled:opacity-50"
             aria-label="Send"
           >

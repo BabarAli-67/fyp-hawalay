@@ -39,6 +39,13 @@ export async function addToQueue(record) {
     attempts: record.attempts ?? 0,
   };
   await db.put(STORE_NAME, item);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('hawalay:offline-queue-changed', {
+        detail: { type: 'OFFLINE_QUEUE_ITEM_ADDED', itemId: item.id },
+      }),
+    );
+  }
   return item;
 }
 

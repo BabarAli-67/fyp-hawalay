@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Message = require('./models/Message');
 const User = require('./models/User');
-const { verifyMatchParticipant } = require('./utils/matchParticipant');
+const { isMatchChatLocked, verifyMatchParticipant } = require('./utils/matchParticipant');
 
 let io = null;
 
@@ -76,8 +76,9 @@ function registerChatHandlers(socket) {
 
       const roomSet = io.sockets.adapter.rooms.get(room);
       const roomSize = roomSet ? roomSet.size : 0;
+      const locked = await isMatchChatLocked(access.match);
 
-      socket.emit('chat:joined', { matchId, roomSize });
+      socket.emit('chat:joined', { matchId, roomSize, locked });
 
       const messageIds = await markMessagesReadByUser(matchId, socket.data.userId);
       if (messageIds.length > 0) {
@@ -129,6 +130,15 @@ function registerChatHandlers(socket) {
         } else {
           socket.emit('chat:error', { code: access.code, matchId: matchId || null });
         }
+        return;
+      }
+
+      if (await isMatchChatLocked(access.match)) {
+        socket.emit('chat:error', {
+          code: 'CHAT_LOCKED',
+          message: 'This conversation is read-only because the item was returned.',
+          matchId,
+        });
         return;
       }
 
@@ -195,6 +205,10 @@ function registerChatHandlers(socket) {
       const access = await verifyMatchParticipant(matchId, socket.data.userId);
 
       if (!access.ok) {
+        return;
+      }
+
+      if (await isMatchChatLocked(access.match)) {
         return;
       }
 

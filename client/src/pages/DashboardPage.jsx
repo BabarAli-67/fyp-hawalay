@@ -8,6 +8,8 @@ import { HowHawalayWorks } from '../components/dashboard/HowHawalayWorks.jsx';
 import { PrivacyPriorityBanner } from '../components/dashboard/PrivacyPriorityBanner.jsx';
 import { RecentlyFoundSection } from '../components/dashboard/RecentlyFoundSection.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useOfflineQueue } from '../hooks/useOfflineQueue.js';
+import { getAllQueue } from '../utils/indexedDB.js';
 
 const EMPTY_STATS = {
   itemsLost: 0,
@@ -21,12 +23,14 @@ const EMPTY_STATS = {
  */
 export default function DashboardPage() {
   const { user: authUser } = useAuth();
+  const { isOnline } = useOfflineQueue();
   const navigate = useNavigate();
   const displayName = authUser?.name ?? 'there';
 
   const [stats, setStats] = useState(EMPTY_STATS);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -51,6 +55,27 @@ export default function DashboardPage() {
     loadStats();
   }, [loadStats]);
 
+  const loadPendingSyncCount = useCallback(async () => {
+    try {
+      const queue = await getAllQueue();
+      setPendingSyncCount(queue.length);
+    } catch {
+      setPendingSyncCount(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPendingSyncCount();
+
+    const handleQueueChanged = () => loadPendingSyncCount();
+    window.addEventListener('hawalay:offline-queue-changed', handleQueueChanged);
+    return () => window.removeEventListener('hawalay:offline-queue-changed', handleQueueChanged);
+  }, [loadPendingSyncCount]);
+
+  useEffect(() => {
+    loadPendingSyncCount();
+  }, [isOnline, loadPendingSyncCount]);
+
   return (
     <div className="bg-background text-on-background min-h-screen pb-24">
       <div className="w-full max-w-5xl lg:max-w-6xl mx-auto px-margin-mobile md:px-8 space-y-lg">
@@ -60,6 +85,35 @@ export default function DashboardPage() {
           </h2>
           <DashboardLocationBadge />
         </section>
+
+        {pendingSyncCount > 0 ? (
+          <section
+            className="flex items-center gap-md rounded-xl border border-tertiary/20 bg-tertiary-container px-md py-sm text-on-tertiary-container shadow-sm"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="material-symbols-outlined shrink-0" aria-hidden>
+              cloud_sync
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-label-sm text-label-sm">
+                {pendingSyncCount} {pendingSyncCount === 1 ? 'report is' : 'reports are'} pending sync
+              </p>
+              <p className="font-caption text-caption">
+                {isOnline
+                  ? 'Syncing automatically. This notice will disappear after a successful sync.'
+                  : 'Saved on this device and will sync automatically when you reconnect.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/offline')}
+              className="shrink-0 rounded-lg px-sm py-xs font-label-sm text-label-sm hover:bg-on-tertiary-container/10"
+            >
+              View
+            </button>
+          </section>
+        ) : null}
 
         <section className="grid grid-cols-2 gap-md md:gap-lg">
           <button

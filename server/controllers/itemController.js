@@ -871,6 +871,105 @@ async function deleteItem(req, res, next) {
   }
 }
 
+/**
+ * Update owner-editable report fields without replacing the image or AI provenance.
+ * Rebuild the semantic embedding from the final edited text when the AI service is available.
+ */
+async function updateItem(req, res, next) {
+  try {
+    const item = await Item.findOne({
+      _id: req.params.id,
+      ownerId: req.user.userId,
+      isDeleted: { $ne: true },
+    });
+
+    if (!item) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    const has = (key) => Object.prototype.hasOwnProperty.call(req.body, key);
+    const optionalText = (key) => {
+      const value = req.body[key];
+      return value == null || String(value).trim() === '' ? undefined : String(value).trim();
+    };
+
+    if (has('reportType')) item.reportType = req.body.reportType;
+    if (has('title')) item.title = String(req.body.title).trim();
+    if (has('brand')) item.brand = optionalText('brand');
+    if (has('colors')) item.colors = parseColors(req.body.colors);
+    if (has('locationName')) item.locationName = String(req.body.locationName).trim();
+    if (has('secondaryLocationName')) {
+      item.secondaryLocationName = optionalText('secondaryLocationName');
+    }
+    if (has('date')) item.date = req.body.date;
+    if (has('description')) item.description = optionalText('description');
+    if (has('distinctiveFeatures')) {
+      item.distinctiveFeatures = optionalText('distinctiveFeatures');
+    }
+    if (has('contactPreference')) item.contactPreference = req.body.contactPreference;
+
+    if (has('category')) {
+      const categoryFields = resolveCategoryFields({
+        userCategory: req.body.category,
+        detectedObjects: item.detectedObjects || [],
+        aiResponse: {
+          aiMetadata: item.aiMetadata || {},
+          suggestedCategory: item.aiCategory || item.aiMetadata?.suggestedCategory,
+        },
+      });
+      item.category = categoryFields.category;
+      item.userCategory = categoryFields.userCategory;
+      item.aiCategory = categoryFields.aiCategory;
+      item.effectiveCategory = categoryFields.effectiveCategory;
+      item.categoryMismatch = categoryFields.categoryMismatch;
+      item.categoryDetectionConfidence = categoryFields.categoryDetectionConfidence;
+    }
+
+    const finalBody = {
+      category: item.effectiveCategory || item.category,
+      locationName: item.locationName,
+      title: item.title,
+      description: item.description,
+      distinctiveFeatures: item.distinctiveFeatures,
+      brand: item.brand,
+      colors: item.colors,
+      caption: item.caption,
+      ocrText: item.ocrText,
+    };
+    const embedding = await resolveItemEmbedding({
+      body: finalBody,
+      file: null,
+      aiResponse: null,
+      clientVector: item.embeddingVector,
+      detectedObjects: item.detectedObjects || [],
+    });
+    if (embedding.available && embedding.vector) {
+      item.embeddingVector = embedding.vector;
+      item.embeddingAvailable = true;
+      item.aiMetadata = {
+        ...(item.aiMetadata?.toObject?.() || item.aiMetadata || {}),
+        embeddingAvailable: true,
+        embeddingModel:
+          embedding.model || item.aiMetadata?.embeddingModel || 'gemini-embedding-2',
+        embeddingDimension: embedding.dimension || embedding.vector.length,
+        processedAt: new Date(),
+      };
+    }
+
+    await item.save();
+
+    setImmediate(() => {
+      triggerMatchingWithRetry(item).catch(console.error);
+    });
+
+    return res
+      .status(200)
+      .json(stripSensitiveMetadataFromItem(applyResolvedCategoryToItem(item)));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function updateStatus(req, res, next) {
   try {
     const item = await Item.findById(req.params.id);
@@ -922,5 +1021,6 @@ module.exports = {
   getItemById,
   streamImage,
   deleteItem,
+  updateItem,
   updateStatus,
 };

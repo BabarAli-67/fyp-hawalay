@@ -291,7 +291,7 @@ export default function NotificationsPage() {
                   className={`relative group p-md rounded-xl shadow-sm flex gap-md items-start transition-all ${
                     notification.isRead
                       ? 'bg-surface-container-lowest'
-                      : 'bg-blue-50 border border-blue-100/80'
+                      : 'bg-primary-container/15 border border-primary/25'
                   } ${!notification.isRead ? meta.borderClass : ''}`}
                 >
                   <div
@@ -305,12 +305,12 @@ export default function NotificationsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start gap-sm mb-1">
                       <h3 className="font-h3 text-h3 text-on-surface truncate">{headline}</h3>
-                      <span className="font-caption text-caption text-outline shrink-0">
+                      <span className="font-caption text-caption text-on-surface-variant shrink-0">
                         {formatNotificationTime(notification.createdAt)}
                       </span>
                     </div>
 
-                    <p className="font-body-md text-body-md text-on-surface-variant mb-md leading-relaxed">
+                    <p className="font-body-md text-body-md text-on-surface mb-md leading-relaxed">
                       {notification.message}
                     </p>
 
@@ -343,7 +343,7 @@ export default function NotificationsPage() {
                         <button
                           type="button"
                           onClick={() => handleMarkRead(notification._id)}
-                          className="font-label-sm text-outline hover:text-on-surface-variant transition-all"
+                          className="font-label-sm text-on-surface-variant hover:text-on-surface transition-all"
                         >
                           Mark as read
                         </button>

@@ -62,12 +62,39 @@ const updateStatusValidation = [
   body('claimedByUserId').optional().isMongoId().withMessage('Invalid claimedByUserId'),
 ];
 
+const updateItemValidation = [
+  ...itemIdParamValidation,
+  body('reportType').optional().isIn(REPORT_TYPES).withMessage('reportType must be lost or found'),
+  body('title')
+    .optional()
+    .trim()
+    .notEmpty()
+    .withMessage('title cannot be empty')
+    .isLength({ max: 100 })
+    .withMessage('title must be 100 characters or fewer'),
+  body('category').optional().isIn(CATEGORIES).withMessage('Invalid category'),
+  body('brand').optional({ nullable: true }).trim().isLength({ max: 100 }),
+  body('colors').optional(),
+  body('locationName')
+    .optional()
+    .trim()
+    .notEmpty()
+    .withMessage('locationName cannot be empty')
+    .isLength({ max: 200 }),
+  body('secondaryLocationName').optional({ nullable: true }).trim().isLength({ max: 200 }),
+  body('date').optional().isISO8601().withMessage('date must be a valid ISO date'),
+  body('description').optional({ nullable: true }).isLength({ max: 1000 }),
+  body('distinctiveFeatures').optional({ nullable: true }).isLength({ max: 500 }),
+  body('contactPreference').optional().isIn(CONTACT_PREFERENCES),
+];
+
 const deleteItemValidator = [param('id').isMongoId()];
 
 module.exports = {
   createItemValidation,
   getItemsValidation,
   itemIdParamValidation,
+  updateItemValidation,
   updateStatusValidation,
   deleteItemValidator,
 };

@@ -73,7 +73,24 @@ async function verifyMatchParticipant(matchId, userId) {
   return { ok: true, ...access };
 }
 
+/**
+ * A completed return permanently makes its match chat read-only.
+ * The item-status check also covers legacy/manual return completions.
+ */
+async function isMatchChatLocked(match) {
+  if (!match) return false;
+  if (match.returnCompletedAt) return true;
+
+  const returnedItem = await Item.exists({
+    _id: { $in: [match.sourceItemId, match.matchedItemId] },
+    status: 'returned',
+    isDeleted: { $ne: true },
+  });
+  return Boolean(returnedItem);
+}
+
 module.exports = {
   findMatchForParticipant,
   verifyMatchParticipant,
+  isMatchChatLocked,
 };

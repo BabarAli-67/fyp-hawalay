@@ -357,30 +357,118 @@ export function pickBrandFromAnalyze(analyze) {
   );
 }
 
+const MAX_ITEM_NAME_LENGTH = 60;
+
 /**
+ * True when text looks like a descriptive paragraph rather than a short item name.
+ * @param {string} text
+ */
+function looksLikeDescription(text) {
+  const value = String(text || '').trim();
+  if (!value) return true;
+  if (value.length > MAX_ITEM_NAME_LENGTH) return true;
+  if (/[.!?]/.test(value)) return true;
+  if ((value.match(/,/g) || []).length >= 2) return true;
+  if (/\b(with|featuring|that|which|appears|located|found|visible)\b/i.test(value)) return true;
+  // Long "A black leather wallet sitting on..." style captions.
+  if (/^(a|an|the)\s+\w+/i.test(value) && value.split(/\s+/).length > 6) return true;
+  return false;
+}
+
+/**
+ * Build a short display name from brand + detected object class.
+ * @param {string | null} brand
+ * @param {string | null} objectLabel
+ */
+function composeShortItemName(brand, objectLabel) {
+  const label = objectLabel ? humanizeKey(objectLabel) : '';
+  const brandText = brand ? String(brand).trim() : '';
+  if (brandText && label) {
+    // Avoid "Apple Apple Phone"
+    if (label.toLowerCase().includes(brandText.toLowerCase())) return label.slice(0, MAX_ITEM_NAME_LENGTH);
+    return `${brandText} ${label}`.slice(0, MAX_ITEM_NAME_LENGTH).trim();
+  }
+  if (label) return label.slice(0, MAX_ITEM_NAME_LENGTH);
+  if (brandText) return brandText.slice(0, MAX_ITEM_NAME_LENGTH);
+  return null;
+}
+
+/**
+ * Pull a short noun-ish phrase from a caption without copying the full description.
+ * @param {string} caption
+ */
+function pickShortTitleFromCaption(caption) {
+  const text = String(caption || '').trim();
+  if (!text) return null;
+
+  // Prefer leading "A/An/The <short noun phrase>" before "with/featuring/that..."
+  const leading = text.match(
+    /^(?:a|an|the)\s+((?:[a-z0-9/-]+(?:\s+[a-z0-9/-]+){0,4}))(?=\s+(?:with|featuring|that|which|on|in|at|near|sitting|lying|visible|,|\.|!|\?|$))/i,
+  );
+  if (leading?.[1]) {
+    const phrase = leading[1].trim();
+    if (!looksLikeDescription(phrase)) {
+      return humanizeKey(phrase.replace(/\s+/g, ' '));
+    }
+  }
+
+  // Fallback: first 2–5 words only, never a sentence.
+  const words = text
+    .replace(/^[Aa][Nn]?\s+|^[Tt]he\s+/, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4);
+  if (!words.length) return null;
+  const candidate = words.join(' ').replace(/[,:;]+$/, '').trim();
+  if (!candidate || looksLikeDescription(candidate)) return null;
+  return humanizeKey(candidate);
+}
+
+/**
+ * Short item name for the report form — never the full caption/description.
  * @param {object} analyze Normalized analyze snapshot
  * @returns {string | null}
  */
 export function pickTitleFromAnalyze(analyze) {
   if (!analyze) return null;
 
-  const suggested =
-    analyze.ocr?.suggested?.suggested_title || analyze.ocr?.suggested?.suggestedTitle;
-  if (typeof suggested === 'string' && suggested.trim()) {
-    return suggested.trim();
-  }
+  const brand = pickBrandFromAnalyze(analyze);
 
   const objects = analyze.objectDetection?.detectedObjects || [];
-  if (objects.length) {
-    const top = [...objects].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
-    if (top?.className) return humanizeKey(top.className);
+  const topObject = objects.length
+    ? [...objects].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0]
+    : null;
+  const objectLabel = topObject?.className || null;
+
+  const fromObject = composeShortItemName(brand, objectLabel);
+  if (fromObject) return fromObject;
+
+  const suggested =
+    analyze.ocr?.suggested?.suggested_title || analyze.ocr?.suggested?.suggestedTitle;
+  if (typeof suggested === 'string' && suggested.trim() && !looksLikeDescription(suggested)) {
+    const shortSuggested = suggested.trim().slice(0, MAX_ITEM_NAME_LENGTH);
+    return brand && !shortSuggested.toLowerCase().includes(brand.toLowerCase())
+      ? composeShortItemName(brand, shortSuggested) || shortSuggested
+      : shortSuggested;
   }
 
-  const caption = (analyze.caption || '').trim();
-  if (caption) {
-    const firstSentence = caption.split(/[.!?]/)[0]?.trim();
-    if (firstSentence && firstSentence.length <= 100) return firstSentence;
+  // Sensitive docs: prefer a fixed short label over OCR prose.
+  const docType = String(
+    analyze.ocrDocumentType || analyze.ocr?.documentType || analyze.sensitiveDocumentType || '',
+  ).toLowerCase();
+  if (docType.includes('cnic') || docType.includes('national_id') || docType.includes('id_card')) {
+    return 'CNIC / ID Card';
   }
+  if (docType.includes('credit') || docType.includes('debit') || docType.includes('card')) {
+    return composeShortItemName(brand, 'Payment Card') || 'Payment Card';
+  }
+
+  const fromCaption = pickShortTitleFromCaption(analyze.caption || '');
+  if (fromCaption) {
+    return composeShortItemName(brand, fromCaption) || fromCaption;
+  }
+
+  if (brand) return brand.slice(0, MAX_ITEM_NAME_LENGTH);
 
   return null;
 }

@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import axiosInstance from '../api/axiosInstance.js';
 import { getMatchesForItem } from '../api/matchesService.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ReturnVerificationPanel } from '../components/matches/ReturnVerificationPanel.jsx';
 import { Badge } from '../components/ui/Badge.jsx';
+import { Button } from '../components/ui/Button.jsx';
 import { EmptyState } from '../components/ui/EmptyState.jsx';
+import { EditReportModal } from '../components/items/EditReportModal.jsx';
 import { ItemImage } from '../components/items/ItemImage.jsx';
 import { Spinner } from '../components/ui/Spinner.jsx';
 import { recordRecentlyViewed } from '../utils/recentlyViewed.js';
@@ -38,6 +41,11 @@ export default function ItemDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [matchContext, setMatchContext] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function loadItem() {
     if (!id) return;
@@ -98,6 +106,34 @@ export default function ItemDetailsPage() {
   const reportVariant = item?.reportType === 'found' ? 'found' : 'lost';
   const reportLabel = item?.reportType === 'found' ? 'FOUND' : 'LOST';
 
+  async function handleSaveReport(payload) {
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const { data } = await axiosInstance.patch(`/api/items/${id}`, payload);
+      setItem(data);
+      setEditOpen(false);
+      toast.success('Report updated successfully.');
+    } catch (err) {
+      setEditError(err?.response?.data?.error || 'Could not update this report.');
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDeleteReport() {
+    setDeleting(true);
+    try {
+      await axiosInstance.delete(`/api/items/${id}`);
+      toast.success('Report deleted.');
+      navigate('/dashboard', { replace: true });
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not delete this report.');
+      setDeleting(false);
+      setDeleteOpen(false);
+    }
+  }
+
   return (
     <div className="bg-background text-on-background min-h-screen pb-24">
       <div className="px-margin-mobile max-w-2xl mx-auto">
@@ -142,12 +178,37 @@ export default function ItemDetailsPage() {
             </section>
 
             <section className="bg-surface-container-lowest rounded-xl p-md border border-outline-variant/30 shadow-sm space-y-md">
-              <div>
-                <h1 className="font-h1 text-h1 text-on-surface">{item.title}</h1>
-                <div className="flex items-center gap-1 text-on-surface-variant mt-sm">
-                  <span className="material-symbols-outlined text-[18px]">location_on</span>
-                  <span className="font-body-md">{item.locationName}</span>
+              <div className="flex flex-col gap-md sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <h1 className="font-h1 text-h1 text-on-surface break-words">{item.title}</h1>
+                  <div className="flex items-center gap-1 text-on-surface-variant mt-sm">
+                    <span className="material-symbols-outlined text-[18px]">location_on</span>
+                    <span className="font-body-md">{item.locationName}</span>
+                  </div>
                 </div>
+                {isOwner ? (
+                  <div className="flex shrink-0 gap-sm" aria-label="Report actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditError(null);
+                        setEditOpen(true);
+                      }}
+                      className="inline-flex h-11 flex-1 items-center justify-center gap-xs rounded-xl border border-primary/40 px-md font-label-sm text-primary transition-colors hover:bg-primary-container/15 sm:flex-none"
+                    >
+                      <span className="material-symbols-outlined text-[19px]">edit</span>
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteOpen(true)}
+                      className="inline-flex h-11 flex-1 items-center justify-center gap-xs rounded-xl border border-error/40 px-md font-label-sm text-error transition-colors hover:bg-error-container/30 sm:flex-none"
+                    >
+                      <span className="material-symbols-outlined text-[19px]">delete</span>
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
               </div>
 
               <dl className="grid grid-cols-2 gap-md font-body-md">
@@ -260,6 +321,64 @@ export default function ItemDetailsPage() {
           </>
         )}
       </div>
+
+      <EditReportModal
+        item={item}
+        open={editOpen}
+        saving={editSaving}
+        error={editError}
+        onClose={() => {
+          if (!editSaving) {
+            setEditOpen(false);
+            setEditError(null);
+          }
+        }}
+        onSave={handleSaveReport}
+      />
+
+      {deleteOpen && item ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/55 p-md backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deleting) setDeleteOpen(false);
+          }}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-report-title"
+            aria-describedby="delete-report-description"
+            className="w-full max-w-md rounded-2xl border border-outline-variant/30 bg-surface p-lg shadow-xl"
+          >
+            <div className="mb-md flex h-12 w-12 items-center justify-center rounded-full bg-error-container text-error">
+              <span className="material-symbols-outlined">delete</span>
+            </div>
+            <h2 id="delete-report-title" className="font-h2 text-h2 text-on-surface">
+              Delete this report?
+            </h2>
+            <p
+              id="delete-report-description"
+              className="mt-sm font-body-md text-on-surface-variant"
+            >
+              “{item.title}” will be removed from your dashboard and community results. This
+              action cannot be undone.
+            </p>
+            <div className="mt-lg flex gap-sm">
+              <Button
+                variant="secondary"
+                onClick={() => setDeleteOpen(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={handleDeleteReport} loading={deleting}>
+                Delete report
+              </Button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

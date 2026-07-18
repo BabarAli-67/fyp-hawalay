@@ -9,6 +9,7 @@ const {
   getItems,
   processImage,
   streamImage,
+  updateItem,
   updateStatus,
 } = itemController;
 const { authMiddleware } = require('../middleware');
@@ -19,6 +20,7 @@ const {
   deleteItemValidator,
   getItemsValidation,
   itemIdParamValidation,
+  updateItemValidation,
   updateStatusValidation,
 } = require('../middleware/validators/itemValidators');
 
@@ -31,6 +33,7 @@ router.post('/process-image', uploadItemImage, processImage);
 router.post('/analyze-image', uploadItemImage, analyzeImage);
 router.get('/:id/image', itemIdParamValidation, handleValidationErrors, streamImage);
 router.patch('/:id/status', updateStatusValidation, handleValidationErrors, updateStatus);
+router.patch('/:id', updateItemValidation, handleValidationErrors, updateItem);
 router.delete('/:id', authMiddleware, deleteItemValidator, handleValidationErrors, itemController.deleteItem);
 router.post('/', uploadItemImage, createItemValidation, handleValidationErrors, createItem);
 router.get('/', getItemsValidation, handleValidationErrors, getItems);

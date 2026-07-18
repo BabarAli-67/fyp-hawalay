@@ -19,7 +19,7 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
-
+README.pdf
 # --- Logs & debug ---
 *.log
 npm-debug.log*

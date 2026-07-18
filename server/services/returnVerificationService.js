@@ -148,6 +148,14 @@ async function completeReturn(match, lostItem, foundItem) {
       matchedItemId: lostItem._id,
     }),
   ]);
+
+  const lockPayload = {
+    matchId: match._id.toString(),
+    reason: 'return_completed',
+    lockedAt: now.toISOString(),
+  };
+  emitToUser(ownerId.toString(), 'chat:locked', lockPayload);
+  emitToUser(finderId.toString(), 'chat:locked', lockPayload);
 }
 
 /**

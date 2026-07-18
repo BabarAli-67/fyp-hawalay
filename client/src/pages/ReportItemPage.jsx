@@ -14,7 +14,6 @@ import { ReportSection } from '../components/report/ReportSection.jsx';
 import { validateReportItemSubmit } from '../components/report/reportStepValidation.js';
 import {
   ALLOWED_IMAGE_TYPES,
-  BRAND_SUGGESTIONS,
   CATEGORIES,
   CONDITION_OPTIONS,
   MAX_IMAGE_BYTES,
@@ -153,6 +152,7 @@ export default function ReportItemPage() {
   const descriptionEditedRef = useRef(false);
   const featuresEditedRef = useRef(false);
   const analyzeRequestRef = useRef(0);
+  const submitLockRef = useRef(false);
 
   const [reportType, setReportType] = useState('lost');
   const [title, setTitle] = useState('');
@@ -185,6 +185,7 @@ export default function ReportItemPage() {
   const [geolocationWarning, setGeolocationWarning] = useState(null);
   const [showSecondaryLocation, setShowSecondaryLocation] = useState(false);
   const [draftAutoSaveEnabled, setDraftAutoSaveEnabled] = useState(true);
+  const [offlineDraftSaved, setOfflineDraftSaved] = useState(false);
 
   const aiBusy = isProcessingImage || isProcessingOcr;
 
@@ -398,14 +399,14 @@ export default function ReportItemPage() {
   }, [draftReady, draftHadLocation]);
 
   function handleCategoryChange(nextCategory) {
+    if (!nextCategory || nextCategory === category) return;
     categoryEditedRef.current = true;
     setCategory(nextCategory);
     setUserSelectedCategory(nextCategory);
-    if (suggestedCategory && nextCategory === suggestedCategory) {
-      setCategoryMismatchAcknowledged(true);
-    } else if (!suggestedCategory || nextCategory === suggestedCategory) {
-      setCategoryMismatchAcknowledged(false);
-    }
+    // Acknowledge when user matches AI suggestion; otherwise re-show mismatch banner.
+    setCategoryMismatchAcknowledged(
+      Boolean(suggestedCategory) && nextCategory === suggestedCategory,
+    );
   }
 
   function handleKeepCurrentCategory() {
@@ -448,7 +449,8 @@ export default function ReportItemPage() {
     setAiInfoMessage(null);
     titleEditedRef.current = false;
     brandEditedRef.current = false;
-    categoryEditedRef.current = false;
+    // Keep a manual category choice across re-uploads so AI cannot lock the field.
+    // categoryEditedRef is only cleared when the user has never touched category.
     conditionEditedRef.current = false;
     descriptionEditedRef.current = false;
     featuresEditedRef.current = false;
@@ -573,6 +575,12 @@ export default function ReportItemPage() {
   }
 
   async function handleSubmit() {
+    // Synchronous lock — React state alone cannot stop multi-click races offline.
+    if (submitLockRef.current || isSubmitting || aiBusy || offlineDraftSaved) {
+      return;
+    }
+    submitLockRef.current = true;
+
     setGenericError(null);
 
     const validationErrors = validateReportItemSubmit({
@@ -586,6 +594,7 @@ export default function ReportItemPage() {
     });
 
     if (Object.keys(validationErrors).length > 0) {
+      submitLockRef.current = false;
       setFieldErrors(validationErrors);
       if (validationErrors.processing) {
         toast.warn(validationErrors.processing);
@@ -626,6 +635,8 @@ export default function ReportItemPage() {
       });
 
       if (!result.ok) {
+        submitLockRef.current = false;
+        setIsSubmitting(false);
         setFieldErrors(result.fieldErrors || {});
         toast.warn('Please complete all required fields.');
         return;
@@ -635,22 +646,66 @@ export default function ReportItemPage() {
       setDraftAutoSaveEnabled(false);
 
       if (result.offline) {
-        toast.info("Saved offline. Will submit when you're back online.");
+        // Keep lock held — success screen replaces the form; no second queue write.
+        setOfflineDraftSaved(true);
+        setIsSubmitting(false);
         return;
       }
 
       toast.success('Report submitted!');
       navigate(`/matches/ai/${result.itemId}`, { state: { reportSubmitted: true } });
     } catch (err) {
+      submitLockRef.current = false;
       const { fieldErrors: submitFieldErrors, genericError: submitError } = mapSubmitError(err);
       if (submitFieldErrors) {
         setFieldErrors(submitFieldErrors);
       } else {
         setGenericError(submitError);
       }
-    } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (offlineDraftSaved) {
+    return (
+      <div className="min-h-screen bg-background px-margin-mobile text-on-background">
+        <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col items-center justify-center py-xl text-center">
+          <div className="mb-lg flex h-24 w-24 items-center justify-center rounded-full bg-primary-container/20">
+            <span
+              className="material-symbols-outlined text-[52px] text-primary"
+              style={{ fontVariationSettings: "'FILL' 1" }}
+            >
+              cloud_done
+            </span>
+          </div>
+
+          <h1 className="font-h1 text-h1 text-on-surface">Report saved as draft.</h1>
+          <p className="mt-sm max-w-sm font-body-md text-on-surface-variant">
+            Your report is safely stored on this device and will be submitted automatically when
+            you are back online.
+          </p>
+
+          <div className="mt-xl flex w-full flex-col gap-sm">
+            <button
+              type="button"
+              onClick={() => navigate('/offline')}
+              className="flex h-14 w-full items-center justify-center gap-xs rounded-xl bg-primary font-label-sm text-on-primary shadow-md transition-transform active:scale-[0.98]"
+            >
+              <span className="material-symbols-outlined text-[20px]">draft</span>
+              View saved drafts
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard', { replace: true })}
+              className="flex h-14 w-full items-center justify-center gap-xs rounded-xl border border-outline-variant bg-surface-container-lowest font-label-sm text-on-surface transition-transform active:scale-[0.98]"
+            >
+              <span className="material-symbols-outlined text-[20px]">home</span>
+              Back to dashboard
+            </button>
+          </div>
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -798,19 +853,6 @@ export default function ReportItemPage() {
             isLoading={false}
             error={null}
           />
-
-          {suggestedCategory &&
-          userSelectedCategory &&
-          suggestedCategory !== userSelectedCategory &&
-          !categoryMismatchAcknowledged ? (
-            <CategoryMismatchBanner
-              userCategory={userSelectedCategory}
-              suggestedCategory={suggestedCategory}
-              detectedClassName={categoryMismatchLabel}
-              onKeepCurrent={handleKeepCurrentCategory}
-              onUseSuggested={handleUseSuggestedCategory}
-            />
-          ) : null}
         </ReportSection>
 
         <ReportSection
@@ -873,35 +915,56 @@ export default function ReportItemPage() {
                 setBrand(e.target.value);
               }}
               placeholder=" "
-              list={`${formId}-brand-suggestions`}
               autoComplete="off"
             />
           </FloatingField>
-          <datalist id={`${formId}-brand-suggestions`}>
-            {BRAND_SUGGESTIONS.map((b) => (
-              <option key={b} value={b} />
-            ))}
-          </datalist>
 
           <div className="space-y-sm">
-            <label
-              className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider"
-              htmlFor={`${formId}-category`}
+            <div className="flex items-center justify-between gap-sm">
+              <p
+                id={`${formId}-category-label`}
+                className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider"
+              >
+                Category
+              </p>
+              <span className="font-caption text-on-surface-variant">Tap to change</span>
+            </div>
+            <div
+              role="group"
+              aria-labelledby={`${formId}-category-label`}
+              className="grid grid-cols-2 sm:grid-cols-3 gap-sm"
             >
-              Category
-            </label>
-            <select
-              id={`${formId}-category`}
-              value={category}
-              onChange={(e) => handleCategoryChange(e.target.value)}
-              className="w-full h-14 px-md bg-surface-container-low border-b-2 border-outline-variant focus:border-primary text-on-surface rounded-t-lg transition-all outline-none font-body-md"
-            >
-              {CATEGORIES.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+              {CATEGORIES.map((c) => {
+                const selected = category === c.value;
+                return (
+                  <button
+                    key={c.value}
+                    type="button"
+                    onClick={() => handleCategoryChange(c.value)}
+                    aria-pressed={selected}
+                    className={`min-h-[48px] rounded-xl px-md py-sm font-label-sm text-left transition-all active:scale-[0.98] border ${
+                      selected
+                        ? 'bg-primary text-on-primary border-primary shadow-sm'
+                        : 'bg-surface-container-low text-on-surface border-outline-variant/40 hover:bg-surface-container hover:border-outline-variant'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+            {suggestedCategory &&
+            userSelectedCategory &&
+            suggestedCategory !== userSelectedCategory &&
+            !categoryMismatchAcknowledged ? (
+              <CategoryMismatchBanner
+                userCategory={userSelectedCategory}
+                suggestedCategory={suggestedCategory}
+                detectedClassName={categoryMismatchLabel}
+                onKeepCurrent={handleKeepCurrentCategory}
+                onUseSuggested={handleUseSuggestedCategory}
+              />
+            ) : null}
           </div>
 
           <div className="space-y-sm">
@@ -918,7 +981,7 @@ export default function ReportItemPage() {
                 conditionEditedRef.current = true;
                 setCondition(e.target.value);
               }}
-              className="w-full h-14 px-md bg-surface-container-low border-b-2 border-outline-variant focus:border-primary text-on-surface rounded-t-lg transition-all outline-none font-body-md"
+              className="w-full h-14 px-md bg-surface-container-low border-b-2 border-outline-variant focus:border-primary text-on-surface rounded-t-lg transition-all outline-none font-body-md cursor-pointer"
             >
               {CONDITION_OPTIONS.map((opt) => (
                 <option key={opt.value || 'unset'} value={opt.value}>
@@ -1060,8 +1123,9 @@ export default function ReportItemPage() {
         <button
           type="submit"
           form={formId}
-          disabled={isSubmitting || aiBusy}
-          className="w-full max-w-2xl mx-auto h-14 rounded-xl bg-primary text-on-primary font-label-sm shadow-lg flex items-center justify-center gap-xs active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
+          disabled={isSubmitting || aiBusy || offlineDraftSaved}
+          aria-busy={isSubmitting}
+          className="w-full max-w-2xl mx-auto h-14 rounded-xl bg-primary text-on-primary font-label-sm shadow-lg flex items-center justify-center gap-xs active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
         >
           {isSubmitting ? 'Submitting…' : 'Submit Report'}
           {!isSubmitting ? <span className="material-symbols-outlined">check</span> : null}

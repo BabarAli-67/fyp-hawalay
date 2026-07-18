@@ -17,21 +17,14 @@ const STATUS_LABEL = {
   expired: 'Expired',
 };
 
-const STATUS_CYCLE = ['active', 'claimed', 'expired'];
-
-function nextStatus(current) {
-  const index = STATUS_CYCLE.indexOf(current);
-  return STATUS_CYCLE[(index + 1) % STATUS_CYCLE.length];
-}
-
 /**
  * OLX-style horizontal marketplace card — image left, metadata right, fully clickable.
+ * Status badge is display-only (does not change status on tap).
  */
-export function HorizontalItemCard({ item, onStatusChange, showViewHint = true }) {
+export function HorizontalItemCard({ item, showViewHint = true }) {
   const reportVariant = item.reportType === 'found' ? 'found' : 'lost';
   const reportLabel = item.reportType === 'found' ? 'FOUND' : 'LOST';
   const statusKey = STATUS_LABEL[item.status] ? item.status : 'active';
-  const canCycleStatus = onStatusChange && item.status !== 'returned';
   const locationName = item.locationName?.trim() || '—';
   const detailPath = `/item/${item._id}`;
 
@@ -73,17 +66,11 @@ export function HorizontalItemCard({ item, onStatusChange, showViewHint = true }
           </div>
 
           <div className="mt-sm flex items-center justify-between gap-sm pt-1">
-            {!canCycleStatus ? (
-              <span
-                className={`shrink-0 text-[10px] font-bold uppercase tracking-tighter rounded px-2 py-0.5 ${STATUS_CLASS[statusKey] ?? STATUS_CLASS.active}`}
-              >
-                {STATUS_LABEL[statusKey] ?? STATUS_LABEL.active}
-              </span>
-            ) : (
-              <span className="font-caption text-on-surface-variant" aria-hidden>
-                {' '}
-              </span>
-            )}
+            <span
+              className={`shrink-0 text-[10px] font-bold uppercase tracking-tighter rounded px-2 py-0.5 pointer-events-none ${STATUS_CLASS[statusKey] ?? STATUS_CLASS.active}`}
+            >
+              {STATUS_LABEL[statusKey] ?? STATUS_LABEL.active}
+            </span>
             {showViewHint ? (
               <span className="flex shrink-0 items-center gap-0.5 font-caption text-primary opacity-80 transition-opacity group-hover:opacity-100">
                 View details
@@ -93,19 +80,6 @@ export function HorizontalItemCard({ item, onStatusChange, showViewHint = true }
           </div>
         </div>
       </Link>
-
-      {canCycleStatus ? (
-        <div className="flex shrink-0 items-end border-l border-outline-variant/15 p-md pl-sm">
-          <button
-            type="button"
-            className={`text-[10px] font-bold uppercase tracking-tighter rounded px-2 py-1 cursor-pointer active:scale-95 transition-transform ${STATUS_CLASS[statusKey] ?? STATUS_CLASS.active}`}
-            onClick={() => onStatusChange(item, nextStatus(item.status))}
-            aria-label={`Change status from ${STATUS_LABEL[statusKey] ?? STATUS_LABEL.active}`}
-          >
-            {STATUS_LABEL[statusKey] ?? STATUS_LABEL.active}
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }

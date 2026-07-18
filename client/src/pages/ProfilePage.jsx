@@ -232,15 +232,6 @@ export default function ProfilePage() {
     await fetchMatchHistory(matchesPage + 1, { append: true });
   }
 
-  async function handleStatusChange(item, status) {
-    try {
-      await axiosInstance.patch(`/api/items/${item._id}/status`, { status });
-      await Promise.all([fetchReports(1, { filter: reportFilter }), fetchProfileStats()]);
-    } catch {
-      // Keep list unchanged on failure.
-    }
-  }
-
   function handleReportFilterChange(nextFilter) {
     setReportFilter(nextFilter);
   }
@@ -432,7 +423,7 @@ export default function ProfilePage() {
                   ) : (
                     <div className="space-y-md pb-8">
                       {items.map((item) => (
-                        <ItemCard key={item._id} item={item} onStatusChange={handleStatusChange} />
+                        <ItemCard key={item._id} item={item} />
                       ))}
                       {hasMoreReports
                         ? renderViewMoreButton({
