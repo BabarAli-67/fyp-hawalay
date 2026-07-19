@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     match_limit: int = Field(default=5, alias="MATCH_LIMIT")
     max_match_candidates: int = Field(default=100, alias="MAX_MATCH_CANDIDATES")
     category_bonus: float = Field(default=0.10, alias="CATEGORY_BONUS")
+    location_weight: float = Field(
+        default=0.25,
+        alias="LOCATION_WEIGHT",
+        description="Share of final match score driven by map proximity (0–0.5)",
+    )
 
     # OCR — YOLO + EasyOCR
     yolo_weights_path: str | None = Field(default=None, alias="YOLO_WEIGHTS_PATH")

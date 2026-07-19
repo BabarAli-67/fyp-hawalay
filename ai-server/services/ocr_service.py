@@ -311,7 +311,7 @@ class OcrService:
             logger.warning("[ocr] invalid empty crop class=%s", class_name)
             return {"text": "", "ocr_confidence": 0.0, "text_boxes": []}
 
-        processed = preprocess_for_easyocr(crop_bgr)
+        processed, preprocess_scale = preprocess_for_easyocr(crop_bgr)
         results = self._readtext_on_crop(processed, class_name, detail=1)
         if not results:
             logger.debug("[ocr] no text class=%s", class_name)
@@ -322,6 +322,7 @@ class OcrService:
             results,
             offset_x=offset_x,
             offset_y=offset_y,
+            scale=preprocess_scale,
         )
         full_text = " ".join(box["text"] for box in text_boxes)
         avg_confidence = (

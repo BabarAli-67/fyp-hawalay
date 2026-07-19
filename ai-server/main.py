@@ -174,6 +174,7 @@ async def lifespan(app: FastAPI):
         match_limit=settings.match_limit,
         max_candidates=settings.max_match_candidates,
         category_bonus=settings.category_bonus,
+        location_weight=settings.location_weight,
     )
 
     app.state.model_registry = registry

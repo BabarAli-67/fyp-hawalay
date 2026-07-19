@@ -10,17 +10,32 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from utils.sensitive_regions import text_matches_cnic
+
 # Phase 1 scope: CNIC, national ID, credit card, debit card (see _normalize_sensitive_document_type).
 
+_IDENTITY_DOC_TYPES = frozenset({"cnic", "national_id"})
+_PAYMENT_DOC_TYPES = frozenset({"credit_card", "debit_card"})
+
+# Identity patterns first — caption may also mention "card", which must not win as payment.
 _VISION_SENSITIVE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bcnic\b", re.IGNORECASE), "cnic"),
+    (re.compile(r"\bnational\s+id(?:entity)?\s+card\b", re.IGNORECASE), "national_id"),
+    (re.compile(r"\bnational\s+identity\s+card\b", re.IGNORECASE), "national_id"),
+    (re.compile(r"\bnational\s+id\b", re.IGNORECASE), "national_id"),
+    (re.compile(r"\bidentity\s+card\b", re.IGNORECASE), "national_id"),
+    (re.compile(r"\bpakistan\s+national\b", re.IGNORECASE), "national_id"),
+    (re.compile(r"\bnadra\b", re.IGNORECASE), "cnic"),
     (re.compile(r"\bdebit\s+card\b", re.IGNORECASE), "debit_card"),
     (re.compile(r"\bcredit\s+card\b", re.IGNORECASE), "credit_card"),
     (re.compile(r"\bpayment\s+card\b", re.IGNORECASE), "credit_card"),
     (re.compile(r"\bbank\s+card\b", re.IGNORECASE), "credit_card"),
-    (re.compile(r"\bcnic\b", re.IGNORECASE), "cnic"),
-    (re.compile(r"\bnational\s+id(?:entity)?\s+card\b", re.IGNORECASE), "national_id"),
-    (re.compile(r"\bnational\s+id\b", re.IGNORECASE), "national_id"),
-    (re.compile(r"\bidentity\s+card\b", re.IGNORECASE), "national_id"),
+)
+
+_IDENTITY_OCR_KEYWORDS = re.compile(
+    r"\b(?:cnic|nadra|national\s+id(?:entity)?(?:\s+card)?|identity\s+card|"
+    r"pakistan\s+national|government\s+of\s+pakistan)\b",
+    re.IGNORECASE,
 )
 
 
@@ -68,14 +83,34 @@ def _classify_payment_card_type(ocr_payload: dict[str, Any]) -> str:
     return "credit_card"
 
 
+def _ocr_haystack(ocr_payload: dict[str, Any]) -> str:
+    return " ".join(
+        [
+            _field_text(ocr_payload, "card_number"),
+            _field_text(ocr_payload, "card_brand"),
+            _field_text(ocr_payload, "cardholder_name"),
+            str(ocr_payload.get("ocr_text") or ""),
+        ]
+    ).strip()
+
+
 def _classify_from_ocr(ocr_payload: dict[str, Any]) -> str | None:
+    card_number = _field_text(ocr_payload, "card_number")
+    haystack = _ocr_haystack(ocr_payload)
+
+    # CNIC numbers are often stored in the shared card_number field.
+    if text_matches_cnic(card_number) or text_matches_cnic(haystack):
+        return "cnic"
+    if _IDENTITY_OCR_KEYWORDS.search(haystack):
+        return "cnic"
+
     doc = _normalize_sensitive_document_type(str(ocr_payload.get("document_type") or ""))
     if doc:
-        if doc == "credit_card":
+        if doc in _PAYMENT_DOC_TYPES:
             return _classify_payment_card_type(ocr_payload)
         return doc
 
-    if _field_text(ocr_payload, "card_number") or _field_text(ocr_payload, "expiry_date"):
+    if card_number or _field_text(ocr_payload, "expiry_date"):
         return _classify_payment_card_type(ocr_payload)
 
     return None
@@ -112,13 +147,25 @@ def resolve_image_sensitivity(
     Returns:
         (is_sensitive, sensitive_document_type)
     """
-    if ocr_payload:
-        doc_type = _classify_from_ocr(ocr_payload)
-        if doc_type:
-            return True, doc_type
+    del yolo_threshold  # Reserved for future confidence gating.
 
-    return resolve_sensitivity_from_vision_text(
+    ocr_type = _classify_from_ocr(ocr_payload) if ocr_payload else None
+    vision_ocr_text = ocr_text or (str((ocr_payload or {}).get("ocr_text") or ""))
+    vision_sensitive, vision_type = resolve_sensitivity_from_vision_text(
         caption=caption,
         distinctive_features=distinctive_features,
-        ocr_text=ocr_text or (str((ocr_payload or {}).get("ocr_text") or "")),
+        ocr_text=vision_ocr_text,
     )
+
+    # Caption correctly naming a national ID must override OCR mislabeling the
+    # shared card_number field as a payment card.
+    if vision_type in _IDENTITY_DOC_TYPES and ocr_type in (*_PAYMENT_DOC_TYPES, None):
+        return True, vision_type
+
+    if ocr_type:
+        return True, ocr_type
+
+    if vision_sensitive:
+        return True, vision_type
+
+    return False, None

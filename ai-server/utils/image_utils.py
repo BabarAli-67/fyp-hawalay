@@ -190,4 +190,5 @@ def preprocess_crop_for_ocr(crop_bgr: np.ndarray) -> np.ndarray:
     """
     from utils.ocr_preprocessing import preprocess_for_easyocr  # noqa: PLC0415
 
-    return preprocess_for_easyocr(crop_bgr)
+    processed, _scale = preprocess_for_easyocr(crop_bgr)
+    return processed

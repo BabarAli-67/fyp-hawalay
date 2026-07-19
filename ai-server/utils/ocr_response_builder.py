@@ -58,7 +58,7 @@ def build_ocr_response(
     ]
 
     ocr_text = build_ocr_text_summary(detections_map) or degraded_ocr_text
-    suggested_raw = build_suggested_fields(detections_map)
+    suggested_raw = build_suggested_fields(detections_map, document_type=resolved_type)
     suggested = OcrSuggestedFields(**suggested_raw) if suggested_raw else None
 
     success = status == "success" or (

@@ -63,11 +63,14 @@ function resolveCoordinatesWithStatus() {
   });
 }
 
-async function applyGeolocationToLocation(coords, setCoordinates, setLocationName) {
+async function applyGeolocationToLocation(coords, setCoordinates, setLocationName, requestRef) {
   setCoordinates(coords);
   setLocationName('Finding address…');
 
+  const requestId = requestRef ? ++requestRef.current : 0;
   const placeName = await reverseGeocodeCoordinates(coords);
+  if (requestRef && requestId !== requestRef.current) return;
+
   if (placeName) {
     setLocationName(placeName);
     return;
@@ -153,6 +156,12 @@ export default function ReportItemPage() {
   const featuresEditedRef = useRef(false);
   const analyzeRequestRef = useRef(0);
   const submitLockRef = useRef(false);
+  const primaryGeocodeReqRef = useRef(0);
+  const secondaryGeocodeReqRef = useRef(0);
+  const imageInputRef = useRef(null);
+  /** Once the user taps the map, GPS auto-locate must not overwrite their pin. */
+  const primaryPinnedByUserRef = useRef(false);
+  const secondaryPinnedByUserRef = useRef(false);
 
   const [reportType, setReportType] = useState('lost');
   const [title, setTitle] = useState('');
@@ -351,6 +360,8 @@ export default function ReportItemPage() {
     if (!draftReady) return undefined;
 
     if (draftHadLocation) {
+      // Restored draft already has a chosen pin — never run GPS overwrite.
+      primaryPinnedByUserRef.current = true;
       setIsAutoLocating(false);
       return undefined;
     }
@@ -365,19 +376,31 @@ export default function ReportItemPage() {
       if (cancelled) return;
 
       if (result.coords) {
-        await Promise.all([
-          applyGeolocationToLocation(result.coords, setLocationCoordinates, setLocationName),
-          applyGeolocationToLocation(
+        // GPS can take several seconds. If the user already tapped the map,
+        // keep their pin and skip applying device coordinates.
+        if (!primaryPinnedByUserRef.current) {
+          await applyGeolocationToLocation(
+            result.coords,
+            setLocationCoordinates,
+            setLocationName,
+            primaryGeocodeReqRef,
+          );
+        }
+        if (!secondaryPinnedByUserRef.current) {
+          await applyGeolocationToLocation(
             result.coords,
             setSecondaryLocationCoordinates,
             setSecondaryLocationName,
-          ),
-        ]);
-        setFieldErrors((prev) => {
-          const next = { ...prev };
-          delete next.locationName;
-          return next;
-        });
+            secondaryGeocodeReqRef,
+          );
+        }
+        if (!primaryPinnedByUserRef.current) {
+          setFieldErrors((prev) => {
+            const next = { ...prev };
+            delete next.locationName;
+            return next;
+          });
+        }
       } else if (result.denied) {
         setGeolocationWarning(
           'Location access was denied. Allow location in your browser settings, or tap the maps below to pin locations manually.',
@@ -388,7 +411,7 @@ export default function ReportItemPage() {
         );
       }
 
-      setIsAutoLocating(false);
+      if (!cancelled) setIsAutoLocating(false);
     }
 
     autoLocateOnMount();
@@ -421,16 +444,29 @@ export default function ReportItemPage() {
   }
 
   const handlePrimaryMapSelect = useCallback(({ coordinates }) => {
-    setLocationCoordinates(coordinates);
+    primaryPinnedByUserRef.current = true;
+    setIsAutoLocating(false);
     setFieldErrors((prev) => {
       const next = { ...prev };
       delete next.locationName;
       return next;
     });
+    void applyGeolocationToLocation(
+      coordinates,
+      setLocationCoordinates,
+      setLocationName,
+      primaryGeocodeReqRef,
+    );
   }, []);
 
   const handleSecondaryMapSelect = useCallback(({ coordinates }) => {
-    setSecondaryLocationCoordinates(coordinates);
+    secondaryPinnedByUserRef.current = true;
+    void applyGeolocationToLocation(
+      coordinates,
+      setSecondaryLocationCoordinates,
+      setSecondaryLocationName,
+      secondaryGeocodeReqRef,
+    );
   }, []);
 
   async function handleImageChange(e) {
@@ -569,6 +605,30 @@ export default function ReportItemPage() {
     }
   }
 
+  function handleRemovePhoto() {
+    // Invalidate an in-flight analyze response so it cannot restore removed image data.
+    analyzeRequestRef.current += 1;
+    setIsProcessingImage(false);
+    setIsProcessingOcr(false);
+    setImageFile(null);
+    setImagePreview(null);
+    setEmbeddingVector(null);
+    setEmbeddingAvailable(null);
+    setAnalyzeSnapshot(null);
+    setOcrError(null);
+    setAiInfoMessage(null);
+    setAiAutofillApplied(false);
+    setCategoryMismatchAcknowledged(false);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = '';
+    }
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.image;
+      return next;
+    });
+  }
+
   function handleFormSubmit(e) {
     e.preventDefault();
     handleSubmit();
@@ -642,16 +702,20 @@ export default function ReportItemPage() {
         return;
       }
 
-      await clearDraft();
-      setDraftAutoSaveEnabled(false);
-
       if (result.offline) {
-        // Keep lock held — success screen replaces the form; no second queue write.
+        // IndexedDB queue save is complete. Replace the form immediately;
+        // draft cleanup must not delay or suppress the confirmation screen.
+        setDraftAutoSaveEnabled(false);
         setOfflineDraftSaved(true);
         setIsSubmitting(false);
+        void clearDraft().catch(() => {
+          // The queued report is already safe; stale form-draft cleanup can retry later.
+        });
         return;
       }
 
+      await clearDraft();
+      setDraftAutoSaveEnabled(false);
       toast.success('Report submitted!');
       navigate(`/matches/ai/${result.itemId}`, { state: { reportSubmitted: true } });
     } catch (err) {
@@ -805,7 +869,22 @@ export default function ReportItemPage() {
             >
               <span className="sr-only">Upload image</span>
             </label>
+            {imagePreview ? (
+              <button
+                type="button"
+                onClick={handleRemovePhoto}
+                className="absolute right-3 top-3 z-20 flex h-10 items-center gap-xs rounded-full bg-error px-sm text-on-error shadow-lg transition-transform hover:scale-105 active:scale-95"
+                aria-label="Remove uploaded photo"
+                title="Remove photo"
+              >
+                <span className="material-symbols-outlined text-[20px]" aria-hidden>
+                  close
+                </span>
+                <span className="font-label-sm">Remove</span>
+              </button>
+            ) : null}
             <input
+              ref={imageInputRef}
               id={`${formId}-photo`}
               type="file"
               accept="image/jpeg,image/png"

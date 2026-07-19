@@ -186,19 +186,88 @@ function isKnownBrandName(value) {
 }
 
 /**
+ * True when analyze signals a national ID / CNIC (not a payment card).
+ * @param {object} analyze
+ */
+function isNationalIdAnalyze(analyze) {
+  if (!analyze) return false;
+
+  const raw = analyze.raw || {};
+  const sensitiveType = String(
+    analyze.sensitiveDocumentType ||
+      raw.sensitive_document_type ||
+      raw.sensitiveDocumentType ||
+      '',
+  ).toLowerCase();
+  if (
+    sensitiveType === 'cnic' ||
+    sensitiveType === 'national_id' ||
+    sensitiveType === 'id_card'
+  ) {
+    return true;
+  }
+
+  const docType = String(
+    analyze.ocrDocumentType ||
+      analyze.ocr?.documentType ||
+      raw.ocr?.document_type ||
+      '',
+  ).toLowerCase();
+  if (
+    docType === 'cnic' ||
+    docType === 'national_id' ||
+    docType === 'id_card' ||
+    docType.includes('cnic') ||
+    docType.includes('national_id')
+  ) {
+    return true;
+  }
+
+  const haystack = [
+    analyze.caption,
+    analyze.distinctiveFeatures,
+    analyze.ocrText,
+    analyze.ocr?.ocrText,
+    ...(analyze.featurePoints || []),
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  if (
+    /\b(?:cnic|nadra|national\s+id(?:entity)?(?:\s+card)?|identity\s+card|pakistan\s+national)\b/i.test(
+      haystack,
+    )
+  ) {
+    return true;
+  }
+
+  // Shared OCR field may hold a 13-digit CNIC in card_number.
+  const cardNumber =
+    analyze.ocr?.fields?.cardNumber?.value ||
+    analyze.ocr?.fields?.card_number?.value ||
+    getExtractionRows(analyze).find((row) => row.key === 'card_number')?.value ||
+    '';
+  const digits = String(cardNumber).replace(/\D/g, '');
+  if (digits.length === 13) return true;
+
+  return false;
+}
+
+/**
  * True when analyze signals a credit/debit card (not CNIC / national ID).
  * @param {object} analyze
  */
 function isPaymentCardAnalyze(analyze) {
   if (!analyze) return false;
+  if (isNationalIdAnalyze(analyze)) return false;
 
   const raw = analyze.raw || {};
   const sensitiveType = String(
-    raw.sensitive_document_type || raw.sensitiveDocumentType || '',
+    analyze.sensitiveDocumentType ||
+      raw.sensitive_document_type ||
+      raw.sensitiveDocumentType ||
+      '',
   ).toLowerCase();
-  if (sensitiveType === 'cnic' || sensitiveType === 'national_id') {
-    return false;
-  }
   if (sensitiveType === 'credit_card' || sensitiveType === 'debit_card') {
     return true;
   }
@@ -210,10 +279,26 @@ function isPaymentCardAnalyze(analyze) {
     return true;
   }
 
+  const haystack = [
+    analyze.caption,
+    analyze.distinctiveFeatures,
+    analyze.ocrText,
+    ...(analyze.featurePoints || []),
+  ]
+    .filter(Boolean)
+    .join(' ');
+  if (/\b(?:credit\s+card|debit\s+card|payment\s+card|bank\s+card)\b/i.test(haystack)) {
+    return true;
+  }
+
   const rows = getExtractionRows(analyze);
-  return rows.some(
-    (row) => (row.key === 'card_number' || row.key === 'expiry_date') && row.value,
-  );
+  return rows.some((row) => {
+    if (!(row.key === 'card_number' || row.key === 'expiry_date') || !row.value) return false;
+    if (row.key === 'card_number' && String(row.value).replace(/\D/g, '').length === 13) {
+      return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -432,7 +517,17 @@ function pickShortTitleFromCaption(caption) {
 export function pickTitleFromAnalyze(analyze) {
   if (!analyze) return null;
 
+  // Identity docs first — OCR often stores CNIC digits in card_number and
+  // previously mislabeled them as payment cards.
+  if (isNationalIdAnalyze(analyze)) {
+    return 'CNIC / ID Card';
+  }
+
   const brand = pickBrandFromAnalyze(analyze);
+
+  if (isPaymentCardAnalyze(analyze)) {
+    return composeShortItemName(brand, 'Payment Card') || 'Payment Card';
+  }
 
   const objects = analyze.objectDetection?.detectedObjects || [];
   const topObject = objects.length
@@ -447,20 +542,13 @@ export function pickTitleFromAnalyze(analyze) {
     analyze.ocr?.suggested?.suggested_title || analyze.ocr?.suggested?.suggestedTitle;
   if (typeof suggested === 'string' && suggested.trim() && !looksLikeDescription(suggested)) {
     const shortSuggested = suggested.trim().slice(0, MAX_ITEM_NAME_LENGTH);
+    // Reject leftover payment-card suggestions when caption already named an ID.
+    if (/payment\s*card/i.test(shortSuggested) && isNationalIdAnalyze(analyze)) {
+      return 'CNIC / ID Card';
+    }
     return brand && !shortSuggested.toLowerCase().includes(brand.toLowerCase())
       ? composeShortItemName(brand, shortSuggested) || shortSuggested
       : shortSuggested;
-  }
-
-  // Sensitive docs: prefer a fixed short label over OCR prose.
-  const docType = String(
-    analyze.ocrDocumentType || analyze.ocr?.documentType || analyze.sensitiveDocumentType || '',
-  ).toLowerCase();
-  if (docType.includes('cnic') || docType.includes('national_id') || docType.includes('id_card')) {
-    return 'CNIC / ID Card';
-  }
-  if (docType.includes('credit') || docType.includes('debit') || docType.includes('card')) {
-    return composeShortItemName(brand, 'Payment Card') || 'Payment Card';
   }
 
   const fromCaption = pickShortTitleFromCaption(analyze.caption || '');
@@ -486,6 +574,16 @@ const REPORT_CATEGORIES = new Set([
 
 /** Caption keywords for category when server OCR misroutes (e.g. keys → Documents). */
 const CAPTION_CATEGORY_RULES = [
+  {
+    patterns: [
+      /\bcnic\b/i,
+      /\bnational\s+id(?:entity)?(?:\s+card)?\b/i,
+      /\bidentity\s+card\b/i,
+      /\bpassport\b/i,
+      /\bdriving\s+licen[cs]e\b/i,
+    ],
+    category: 'Documents',
+  },
   {
     patterns: [/\bkeys?\b/i, /\bkeychain\b/i, /\bkey ring\b/i, /\bkey set\b/i, /\bhouse keys?\b/i],
     category: 'Other',
@@ -579,13 +677,17 @@ const CONDITION_HINTS = [
 export function pickCategoryFromAnalyze(analyze) {
   if (!analyze) return null;
 
+  if (isNationalIdAnalyze(analyze) || isPaymentCardAnalyze(analyze)) {
+    return 'Documents';
+  }
+
   const fromCaption = pickCategoryFromCaptionKeywords(analyze);
   const suggested = analyze.suggestedCategory
     ? String(analyze.suggestedCategory).trim()
     : null;
 
   // Prefer caption keywords over a false Documents suggestion from noisy OCR.
-  if (fromCaption && suggested === 'Documents') {
+  if (fromCaption && suggested === 'Documents' && fromCaption !== 'Documents') {
     return REPORT_CATEGORIES.has(fromCaption) ? fromCaption : null;
   }
 

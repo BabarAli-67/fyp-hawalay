@@ -57,9 +57,18 @@ function MapClickHandler({ onMapClick }) {
 function MapViewSync({ center, zoom }) {
   const map = useMap();
   useEffect(() => {
-    if (!center) return;
-    map.setView(center, zoom ?? map.getZoom());
-  }, [center, zoom, map]);
+    if (!center || center.length !== 2) return;
+    const [lat, lng] = center;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const current = map.getCenter();
+    const sameSpot =
+      Math.abs(current.lat - lat) < 1e-7 && Math.abs(current.lng - lng) < 1e-7;
+    const nextZoom = zoom ?? map.getZoom();
+    if (sameSpot && map.getZoom() === nextZoom) return;
+
+    map.setView([lat, lng], nextZoom);
+  }, [center?.[0], center?.[1], zoom, map]);
   return null;
 }
 

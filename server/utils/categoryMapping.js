@@ -253,6 +253,17 @@ const OBJECT_CATEGORY_CONFIDENCE_THRESHOLD = Number(
 /** Caption / feature keywords → report category (non-document personal items). */
 const CAPTION_CATEGORY_RULES = [
   {
+    patterns: [
+      /\bcnic\b/i,
+      /\bnational\s+id(?:entity)?(?:\s+card)?\b/i,
+      /\bidentity\s+card\b/i,
+      /\bpassport\b/i,
+      /\bdriving\s+licen[cs]e\b/i,
+    ],
+    category: 'Documents',
+    label: 'identity document',
+  },
+  {
     patterns: [/\bkeys?\b/i, /\bkeychain\b/i, /\bkey ring\b/i, /\bkey set\b/i, /\bhouse keys?\b/i],
     category: 'Other',
     label: 'keys',
@@ -304,6 +315,40 @@ function ocrHasCardFields(ocr) {
   });
 }
 
+function extractOcrFieldText(ocr, key) {
+  if (!ocr || typeof ocr !== 'object') return '';
+  const fields = ocr.fields && typeof ocr.fields === 'object' ? ocr.fields : {};
+  const fromFields = fields[key]?.value ?? fields[key];
+  const flat = ocr[key];
+  const text = fromFields != null ? fromFields : flat;
+  return text != null ? String(text).trim() : '';
+}
+
+function ocrLooksLikeNationalId(ocr) {
+  if (!ocr || typeof ocr !== 'object') return false;
+  const docType = String(ocr.document_type || ocr.documentType || '')
+    .trim()
+    .toLowerCase();
+  if (['cnic', 'national_id', 'id_card'].includes(docType)) return true;
+
+  const haystack = [
+    extractOcrFieldText(ocr, 'card_number'),
+    extractOcrFieldText(ocr, 'cardholder_name'),
+    ocr.ocr_text || ocr.ocrText || '',
+  ].join(' ');
+
+  if (
+    /\b(?:cnic|nadra|national\s+id(?:entity)?(?:\s+card)?|identity\s+card|pakistan\s+national)\b/i.test(
+      haystack,
+    )
+  ) {
+    return true;
+  }
+
+  const digits = extractOcrFieldText(ocr, 'card_number').replace(/\D/g, '');
+  return digits.length === 13;
+}
+
 /**
  * @param {object | null | undefined} ocr
  * @param {{ allowInferredCard?: boolean }} [options]
@@ -311,6 +356,8 @@ function ocrHasCardFields(ocr) {
  */
 function resolveOcrDocumentType(ocr, { allowInferredCard = false } = {}) {
   if (!ocr || typeof ocr !== 'object') return null;
+  if (ocrLooksLikeNationalId(ocr)) return 'cnic';
+
   const docType = String(ocr.document_type || ocr.documentType || 'unknown')
     .trim()
     .toLowerCase();

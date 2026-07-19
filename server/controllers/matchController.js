@@ -10,9 +10,21 @@ const {
 
 function parsePagination(query) {
   const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
-  const limit = Math.min(50, Math.max(1, Number.parseInt(query.limit, 10) || 20));
+  const limit = Math.min(100, Math.max(1, Number.parseInt(query.limit, 10) || 20));
   return { page, limit, skip: (page - 1) * limit };
 }
+
+/** Hard cap for the per-item matches endpoint (no pagination on that route). */
+const FOR_ITEM_MATCHES_LIMIT = 100;
+
+/**
+ * Only the item fields match cards and return-verification need.
+ * Excludes heavy AI payloads (embeddingVector, ocrText, detectedObjects,
+ * aiMetadata blobs) that dominate query time and response size.
+ */
+const MATCH_ITEM_PROJECTION =
+  '_id ownerId reportType status title category userCategory aiCategory effectiveCategory ' +
+  'locationName location date imageFileId isDeleted aiMetadata.suggestedCategory';
 
 function pickOtherItemForUser(match, sourceItem, matchedItem, userId) {
   const sourceOwnerId = (match.sourceItemOwnerId || sourceItem.ownerId)?.toString();
@@ -38,7 +50,7 @@ async function getMatchesForItem(req, res, next) {
     const { itemId } = req.params;
     const userId = req.user.userId;
 
-    const sourceItem = await Item.findById(itemId).lean();
+    const sourceItem = await Item.findById(itemId).select('ownerId isDeleted').lean();
     if (!sourceItem || sourceItem.isDeleted) {
       return res.status(404).json({ error: 'Item not found' });
     }
@@ -53,6 +65,7 @@ async function getMatchesForItem(req, res, next) {
       $or: [{ sourceItemId: itemId }, { matchedItemId: itemId }],
     })
       .sort({ score: -1 })
+      .limit(FOR_ITEM_MATCHES_LIMIT)
       .lean();
 
     const allItemIds = new Set();
@@ -61,7 +74,9 @@ async function getMatchesForItem(req, res, next) {
       allItemIds.add(m.matchedItemId.toString());
     }
 
-    const items = await Item.find({ _id: { $in: [...allItemIds] } }).lean();
+    const items = await Item.find({ _id: { $in: [...allItemIds] } })
+      .select(MATCH_ITEM_PROJECTION)
+      .lean();
     const itemById = new Map(items.map((i) => [i._id.toString(), i]));
 
     const matches = matchDocs
@@ -133,7 +148,9 @@ async function getUserMatches(req, res, next) {
     const items = await Item.find({
       _id: { $in: [...itemIds] },
       isDeleted: { $ne: true },
-    }).lean();
+    })
+      .select(MATCH_ITEM_PROJECTION)
+      .lean();
     const itemById = new Map(items.map((item) => [item._id.toString(), item]));
 
     const matches = matchDocs

@@ -2,6 +2,8 @@
  * Sensitive OCR region helpers (Phase 2) — server-side only.
  */
 
+const PRECISE_MASK_FIELDS = new Set(['card_number', 'expiry_date', 'cvc']);
+
 function normalizeRegion(region) {
   if (!region || typeof region !== 'object') return null;
 
@@ -80,9 +82,26 @@ function stripSensitiveMetadataFromItem(item) {
   return row;
 }
 
+function isNationalIdAnalyze(analyzePayload) {
+  if (!analyzePayload || typeof analyzePayload !== 'object') return false;
+  const type = String(
+    analyzePayload.sensitive_document_type ||
+      analyzePayload.sensitiveDocumentType ||
+      analyzePayload.ocr?.document_type ||
+      analyzePayload.ocr?.documentType ||
+      '',
+  )
+    .trim()
+    .toLowerCase();
+  return type === 'cnic' || type === 'national_id' || type === 'id_card';
+}
+
 /**
  * Derive coarse mask regions from legacy OCR fields/detections when Phase 2
  * sensitive_regions are unavailable (e.g. stash expired, degraded OCR).
+ *
+ * Prefers precise number/expiry/CVC boxes. Never uses card_boundary — that
+ * whites out the whole ID/card when blurred.
  *
  * @param {object | null | undefined} analyzePayload
  * @returns {Array<object>}
@@ -94,13 +113,18 @@ function buildFallbackMaskRegionsFromAnalyze(analyzePayload) {
   if (!ocr || typeof ocr !== 'object') return [];
 
   const collected = [];
+  const nationalId = isNationalIdAnalyze(analyzePayload);
 
   const fields = ocr.fields;
   if (fields && typeof fields === 'object') {
     for (const [fieldName, entry] of Object.entries(fields)) {
       const bbox = entry?.bbox;
       if (Array.isArray(bbox) && bbox.length === 4) {
-        collected.push({ field: fieldName, box: bbox.map((n) => Math.round(Number(n))) });
+        collected.push({
+          field: fieldName,
+          text: entry?.value != null ? String(entry.value) : fieldName,
+          box: bbox.map((n) => Math.round(Number(n))),
+        });
       }
     }
   }
@@ -110,49 +134,37 @@ function buildFallbackMaskRegionsFromAnalyze(analyzePayload) {
       const bbox = det?.bbox;
       const className = String(det?.class_name || det?.className || 'detection').trim();
       if (Array.isArray(bbox) && bbox.length === 4) {
-        collected.push({ field: className, box: bbox.map((n) => Math.round(Number(n))) });
+        collected.push({
+          field: className,
+          text: det?.text != null ? String(det.text) : className,
+          box: bbox.map((n) => Math.round(Number(n))),
+        });
       }
     }
   }
 
   if (!collected.length) return [];
 
-  const boundary = collected.find((item) => item.field === 'card_boundary');
-  if (boundary) {
-    return [
-      {
-        field: 'document',
-        label: 'Document',
-        text: '',
-        boundingBoxes: [boundary.box],
-        confidence: 0.5,
-      },
-    ];
+  // ID cards: only the identification number — never expiry/DOB or boundary.
+  const precise = collected.filter((item) => {
+    if (!PRECISE_MASK_FIELDS.has(item.field)) return false;
+    if (nationalId) return item.field === 'card_number';
+    return true;
+  });
+
+  if (precise.length) {
+    return precise.map((item) => ({
+      field: item.field,
+      label: item.field === 'card_number' && nationalId ? 'CNIC Number' : 'Sensitive Value',
+      text: item.text || item.field,
+      boundingBoxes: [item.box],
+      confidence: 0.5,
+    }));
   }
 
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const item of collected) {
-    const [x1, y1, x2, y2] = item.box;
-    minX = Math.min(minX, x1, x2);
-    minY = Math.min(minY, y1, y2);
-    maxX = Math.max(maxX, x1, x2);
-    maxY = Math.max(maxY, y1, y2);
-  }
-
-  if (!Number.isFinite(minX)) return [];
-
-  return [
-    {
-      field: 'document',
-      label: 'Document',
-      text: '',
-      boundingBoxes: [[minX, minY, maxX, maxY]],
-      confidence: 0.4,
-    },
-  ];
+  // Do not fall back to card_boundary / union of all detections — that bleaches
+  // half or all of an ID card. Leave empty so the caller can choose a safer path.
+  return [];
 }
 
 module.exports = {

@@ -6,6 +6,7 @@ import { BrowseItemCard } from '../components/items/BrowseItemCard.jsx';
 import { EmptyState } from '../components/ui/EmptyState.jsx';
 import { Spinner } from '../components/ui/Spinner.jsx';
 import { mapItemForCard } from '../utils/mapItemForCard.js';
+import { browseCacheKey, readListCache, writeListCache } from '../utils/browseCache.js';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -47,8 +48,18 @@ export default function BrowseFeedPage() {
   }, [keyword]);
 
   const fetchItems = useCallback(async () => {
-    setLoading(true);
+    const cacheKey = browseCacheKey({ reportType, category, searchQuery });
+    const cached = readListCache(cacheKey);
+
+    // Stale-while-revalidate: show cached results instantly, refresh in background.
+    if (cached) {
+      setItems(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError(null);
+
     try {
       const params = {
         status: 'active',
@@ -60,10 +71,14 @@ export default function BrowseFeedPage() {
       if (searchQuery.trim()) params.q = searchQuery.trim();
 
       const { data } = await axiosInstance.get('/api/items', { params });
-      setItems((data.items ?? []).map(mapItemForCard));
+      const mapped = (data.items ?? []).map(mapItemForCard);
+      setItems(mapped);
+      writeListCache(cacheKey, mapped);
     } catch (err) {
-      setItems([]);
-      setError(err?.response?.data?.error ?? 'Could not load community reports.');
+      if (!cached) {
+        setItems([]);
+        setError(err?.response?.data?.error ?? 'Could not load community reports.');
+      }
     } finally {
       setLoading(false);
     }

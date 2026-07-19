@@ -11,7 +11,9 @@ import { EmptyState } from '../components/ui/EmptyState.jsx';
 import { EditReportModal } from '../components/items/EditReportModal.jsx';
 import { ItemImage } from '../components/items/ItemImage.jsx';
 import { Spinner } from '../components/ui/Spinner.jsx';
-import { recordRecentlyViewed } from '../utils/recentlyViewed.js';
+import { recordRecentlyViewed, removeRecentlyViewed } from '../utils/recentlyViewed.js';
+import { invalidateListCaches } from '../utils/browseCache.js';
+import { clearCachedItemImage } from '../utils/itemImageCache.js';
 
 function formatItemDate(value) {
   if (!value) return '—';
@@ -122,15 +124,22 @@ export default function ItemDetailsPage() {
   }
 
   async function handleDeleteReport() {
+    if (deleting || !id) return;
     setDeleting(true);
+
+    // Optimistic UI: leave the detail page immediately while the API runs.
+    setDeleteOpen(false);
+    invalidateListCaches();
+    clearCachedItemImage(id);
+    const userId = user?._id ?? user?.id;
+    if (userId) removeRecentlyViewed(userId, id);
+    toast.success('Report deleted.');
+    navigate('/dashboard', { replace: true });
+
     try {
       await axiosInstance.delete(`/api/items/${id}`);
-      toast.success('Report deleted.');
-      navigate('/dashboard', { replace: true });
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'Could not delete this report.');
-      setDeleting(false);
-      setDeleteOpen(false);
+      toast.error(err?.response?.data?.error || 'Could not delete this report. It may still appear until you refresh.');
     }
   }
 

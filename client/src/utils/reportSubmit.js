@@ -172,11 +172,14 @@ export async function submitItemReport({
       attempts: 0,
     });
 
-    try {
-      const registration = await navigator.serviceWorker.ready;
-      await registration.sync.register('sync-lost-found-items');
-    } catch {
-      // Background Sync or SW not available yet
+    // Queue persistence is the success condition. Do not hold the form open
+    // while waiting for serviceWorker.ready, which may stay pending offline.
+    if ('serviceWorker' in navigator) {
+      void navigator.serviceWorker.ready
+        .then((registration) => registration.sync?.register?.('sync-lost-found-items'))
+        .catch(() => {
+          // Background Sync or SW not available yet; the online listener retries.
+        });
     }
 
     return { ok: true, offline: true };

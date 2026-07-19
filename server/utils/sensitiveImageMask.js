@@ -17,6 +17,11 @@ const REGION_BLUR_PASSES = 2;
 const FULL_IMAGE_BLUR_SIGMA = 55;
 /** Expand each OCR box slightly so blur covers anti-aliased digit edges. */
 const BOX_PADDING_PX = 8;
+/**
+ * Reject mask boxes larger than this fraction of the image — oversized YOLO /
+ * mis-scaled OCR boxes bleach half or all of an ID card.
+ */
+const MAX_REGION_AREA_RATIO = 0.22;
 
 const FULL_MASK_FIELDS = new Set(['card_number', 'expiry_date', 'cvc', 'document']);
 
@@ -55,10 +60,27 @@ function clampExtractRect(box, width, height) {
 }
 
 /**
+ * @param {number[]} box OCR-space or image-space [x1,y1,x2,y2]
+ * @param {number} scale
+ * @param {number} imageWidth
+ * @param {number} imageHeight
+ */
+function scaledBoxAreaRatio(box, scale, imageWidth, imageHeight) {
+  if (!imageWidth || !imageHeight) return 1;
+  const x1 = Number(box[0]) * scale;
+  const y1 = Number(box[1]) * scale;
+  const x2 = Number(box[2]) * scale;
+  const y2 = Number(box[3]) * scale;
+  const area = Math.abs(x2 - x1) * Math.abs(y2 - y1);
+  return area / (imageWidth * imageHeight);
+}
+
+/**
  * @param {object} region
+ * @param {{ scale: number, imageWidth: number, imageHeight: number }} geometry
  * @returns {Array<{ box: number[], partial: boolean }>}
  */
-function planMaskTargets(region) {
+function planMaskTargets(region, geometry = {}) {
   const field = String(region.field || '').trim();
   const boxes = Array.isArray(region.boundingBoxes)
     ? [...region.boundingBoxes].sort((a, b) => a[0] - b[0])
@@ -66,11 +88,16 @@ function planMaskTargets(region) {
 
   if (boxes.length === 0) return [];
 
-  if (FULL_MASK_FIELDS.has(field)) {
-    return boxes.map((box) => ({ box, partial: false }));
-  }
+  const { scale = 1, imageWidth = 0, imageHeight = 0 } = geometry;
+  const allowLarge = field === 'document';
 
-  return boxes.map((box) => ({ box, partial: false }));
+  return boxes
+    .filter((box) => {
+      if (allowLarge) return true;
+      if (!imageWidth || !imageHeight) return true;
+      return scaledBoxAreaRatio(box, scale, imageWidth, imageHeight) <= MAX_REGION_AREA_RATIO;
+    })
+    .map((box) => ({ box, partial: false }));
 }
 
 /**
@@ -166,7 +193,8 @@ async function maskFullImage(buffer, mimeType = 'image/jpeg') {
 }
 
 /**
- * Blur a central document area (~85% of frame) when OCR boxes are missing.
+ * Blur a narrow horizontal band across the middle of the document — safer for
+ * ID cards than whitening ~85% of the frame when OCR boxes are missing.
  * @param {Buffer} buffer
  * @param {string} mimeType
  */
@@ -179,14 +207,11 @@ async function maskCentralDocumentArea(buffer, mimeType = 'image/jpeg') {
     return maskFullImage(buffer, mimeType);
   }
 
-  const marginX = Math.round(imageWidth * 0.075);
-  const marginY = Math.round(imageHeight * 0.075);
-  const centralBox = [
-    marginX,
-    marginY,
-    imageWidth - marginX,
-    imageHeight - marginY,
-  ];
+  // Thin band near mid-card where CNIC / PAN numbers usually sit.
+  const marginX = Math.round(imageWidth * 0.08);
+  const bandTop = Math.round(imageHeight * 0.42);
+  const bandBottom = Math.round(imageHeight * 0.62);
+  const centralBox = [marginX, bandTop, imageWidth - marginX, bandBottom];
 
   return maskSensitiveImage(
     buffer,
@@ -194,12 +219,13 @@ async function maskCentralDocumentArea(buffer, mimeType = 'image/jpeg') {
       {
         field: 'document',
         label: 'Document',
-        text: '',
+        text: 'fallback',
         boundingBoxes: [centralBox],
         confidence: 0,
       },
     ],
     mimeType,
+    { coordinatesInImageSpace: true },
   );
 }
 
@@ -209,7 +235,7 @@ async function maskCentralDocumentArea(buffer, mimeType = 'image/jpeg') {
  * Fallback order:
  * 1. Phase 2 sensitive_regions (precise)
  * 2. OCR field/detection bounding boxes from analyze payload
- * 3. Central document-area blur
+ * 3. Narrow mid-document band blur
  * 4. Full-image blur
  *
  * @param {Buffer} buffer
@@ -239,11 +265,14 @@ async function protectSensitiveImage(
 
   if (regions.length) {
     const masked = await maskSensitiveImage(buffer, regions, mimeType);
-    return {
-      buffer: masked,
-      strategy,
-      imagePrivacyMasked: true,
-    };
+    // If every region was rejected as oversized, fall through to a safer band.
+    if (masked) {
+      return {
+        buffer: masked,
+        strategy,
+        imagePrivacyMasked: true,
+      };
+    }
   }
 
   const centralMasked = await maskCentralDocumentArea(buffer, mimeType);
@@ -260,9 +289,15 @@ async function protectSensitiveImage(
  * @param {Buffer} buffer
  * @param {Array<object>} sensitiveRegions
  * @param {string} [mimeType]
- * @returns {Promise<Buffer>}
+ * @param {{ coordinatesInImageSpace?: boolean }} [options]
+ * @returns {Promise<Buffer | null>} Null when all regions were rejected as oversized.
  */
-async function maskSensitiveImage(buffer, sensitiveRegions, mimeType = 'image/jpeg') {
+async function maskSensitiveImage(
+  buffer,
+  sensitiveRegions,
+  mimeType = 'image/jpeg',
+  options = {},
+) {
   if (!buffer || !Buffer.isBuffer(buffer) || !Array.isArray(sensitiveRegions)) {
     throw new Error('maskSensitiveImage requires a buffer and region list.');
   }
@@ -278,11 +313,12 @@ async function maskSensitiveImage(buffer, sensitiveRegions, mimeType = 'image/jp
     return maskFullImage(buffer, mimeType);
   }
 
-  const scale = ocrToImageScale(imageWidth, imageHeight);
+  const scale = options.coordinatesInImageSpace ? 1 : ocrToImageScale(imageWidth, imageHeight);
   const composites = [];
+  const geometry = { scale, imageWidth, imageHeight };
 
   for (const region of sensitiveRegions) {
-    const targets = planMaskTargets(region);
+    const targets = planMaskTargets(region, geometry);
     for (const target of targets) {
       composites.push(
         await buildMaskedPatch(baseImage, target, scale, imageWidth, imageHeight),
@@ -291,7 +327,11 @@ async function maskSensitiveImage(buffer, sensitiveRegions, mimeType = 'image/jp
   }
 
   if (composites.length === 0) {
-    return maskCentralDocumentArea(buffer, mimeType);
+    // All boxes were oversized / invalid — signal caller to use a safer fallback.
+    if (options.coordinatesInImageSpace) {
+      return maskFullImage(buffer, mimeType);
+    }
+    return null;
   }
 
   const pipeline = baseImage.composite(composites);
@@ -309,4 +349,5 @@ module.exports = {
   BLUR_SIGMA,
   REGION_BLUR_PASSES,
   FULL_IMAGE_BLUR_SIGMA,
+  MAX_REGION_AREA_RATIO,
 };

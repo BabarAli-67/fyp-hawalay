@@ -304,8 +304,8 @@ async function simulateOfflineSync(token, imagePath) {
       is_sensitive: true,
       sensitive_document_type: 'cnic',
       isSensitive: true,
-      ocr: { fields: { card_number: { value: '*****-*******-9' } }, document_type: 'cnic' },
-      ocr_text: 'Card Number: *****-*******-9',
+      ocr: { fields: { card_number: { value: '**********679' } }, document_type: 'cnic' },
+      ocr_text: 'Card Number: **********679',
     },
     {},
   );

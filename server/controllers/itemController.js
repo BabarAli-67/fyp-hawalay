@@ -771,8 +771,18 @@ async function getItems(req, res, next) {
 
     const filter = buildItemsListFilter({ category, reportType, ownerId, status, q });
 
+    // Exclude heavy AI payloads (embedding vectors, OCR text, detections) —
+    // list cards only need summary fields, and these blobs dominate response size.
+    const LIST_EXCLUDED_FIELDS =
+      '-embeddingVector -ocrText -caption -detectedObjects -aiMetadata.sensitiveRegions -aiMetadata.ocrFields';
+
     const [items, total] = await Promise.all([
-      Item.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Item.find(filter)
+        .select(LIST_EXCLUDED_FIELDS)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
       Item.countDocuments(filter),
     ]);
 
@@ -805,6 +815,7 @@ async function getItemById(req, res, next) {
     return next(err);
   }
 }
+
 
 async function streamImage(req, res, next) {
   try {
@@ -849,23 +860,34 @@ const ITEM_STATUSES = ['active', 'claimed', 'expired', 'returned'];
 
 async function deleteItem(req, res, next) {
   try {
-    const item = await Item.findOne({
-      _id: req.params.id,
-      ownerId: req.user.userId,
-    });
+    // Atomic soft-delete — respond as soon as Mongo confirms, then clean GridFS
+    // in the background so image blob I/O never blocks the client.
+    const item = await Item.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        ownerId: req.user.userId,
+        isDeleted: { $ne: true },
+      },
+      { $set: { isDeleted: true } },
+      { new: false, projection: { imageFileId: 1 } },
+    ).lean();
 
-    if (!item || item.isDeleted) {
+    if (!item) {
       return res.status(404).json({ error: 'Item not found' });
     }
 
-    item.isDeleted = true;
-    await item.save();
+    const imageFileId = item.imageFileId;
+    res.status(200).json({ message: 'Item deleted' });
 
-    if (item.imageFileId) {
-      await deleteFromGridFS(item.imageFileId);
+    if (imageFileId) {
+      setImmediate(() => {
+        deleteFromGridFS(imageFileId).catch((err) => {
+          console.error('Background GridFS cleanup failed after item delete:', err?.message || err);
+        });
+      });
     }
 
-    return res.status(200).json({ message: 'Item deleted' });
+    return undefined;
   } catch (err) {
     return next(err);
   }

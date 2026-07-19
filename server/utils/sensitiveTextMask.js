@@ -26,6 +26,7 @@ const CVC_LABEL_PATTERN = /\b(cvv|cvc|security code)\s*[:#-]?\s*(\d{3,4})\b/gi;
 function maskDigitSequence(digits) {
   const normalized = String(digits).replace(/\D/g, '');
   if (normalized.length <= 3) return normalized;
+  // Keep last 3 digits visible for ID cards and payment cards (e.g. **********123).
   return `${'*'.repeat(normalized.length - 3)}${normalized.slice(-3)}`;
 }
 
@@ -34,11 +35,7 @@ function maskDigitSequence(digits) {
  * @returns {string}
  */
 function maskCardNumberValue(value) {
-  const digits = String(value).replace(/\D/g, '');
-  if (digits.length < 13) {
-    return maskDigitSequence(digits);
-  }
-  return maskDigitSequence(digits);
+  return maskDigitSequence(String(value).replace(/\D/g, ''));
 }
 
 /**
@@ -46,13 +43,9 @@ function maskCardNumberValue(value) {
  * @returns {string}
  */
 function maskCnicValue(value) {
-  const match = String(value).match(/^(\d{5})[-\s]?(\d{7})[-\s]?(\d)$/);
-  if (match) {
-    return `*****-*******-${match[3]}`;
-  }
   const digits = String(value).replace(/\D/g, '');
   if (digits.length === 13) {
-    return `*****-*******-${digits.slice(-1)}`;
+    return maskDigitSequence(digits);
   }
   return maskCardNumberValue(value);
 }
@@ -84,7 +77,7 @@ function isCnicFragmentedGroups(match) {
 function maskFragmentedCardNumbers(text) {
   return String(text).replace(FRAGMENTED_DIGIT_GROUPS, (match) => {
     if (isCnicFragmentedGroups(match)) {
-      return match;
+      return maskCnicValue(match);
     }
     const digits = match.replace(/\D/g, '');
     if (digits.length < 13 || digits.length > 19) {
@@ -142,7 +135,7 @@ function maskSensitiveText(text, options = {}) {
     }
   }
 
-  output = output.replace(CNIC_PATTERN, '*****-*******-$3');
+  output = output.replace(CNIC_PATTERN, (match) => maskCnicValue(match));
   output = maskFragmentedCardNumbers(output);
   output = output.replace(CARD_DIGIT_RUN, (match) => maskCardNumberValue(match));
   output = output.replace(EXPIRY_PATTERN, '**/**');

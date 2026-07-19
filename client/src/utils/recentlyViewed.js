@@ -48,3 +48,17 @@ export function recordRecentlyViewed(userId, item) {
     // Quota or private mode — non-fatal
   }
 }
+
+/** Remove a deleted report from the recently-viewed list. */
+export function removeRecentlyViewed(userId, itemId) {
+  if (!userId || !itemId) return;
+
+  const next = loadRecentlyViewed(userId).filter((entry) => String(entry._id) !== String(itemId));
+
+  try {
+    localStorage.setItem(storageKey(userId), JSON.stringify(next));
+    window.dispatchEvent(new CustomEvent(RECENTLY_VIEWED_CHANGED_EVENT));
+  } catch {
+    // Quota or private mode — non-fatal
+  }
+}

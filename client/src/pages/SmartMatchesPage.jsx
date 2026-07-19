@@ -8,6 +8,7 @@ import { MatchFilterBar } from '../components/matches/MatchFilterBar.jsx';
 import { useUserLocation } from '../hooks/useUserLocation.js';
 import { formatDistanceKm } from '../utils/geoDistance.js';
 import { mapMatchForCard } from '../utils/mapMatchForCard.js';
+import { matchesCacheKey, readListCache, writeListCache } from '../utils/browseCache.js';
 import { sortMatches } from '../utils/matchSort.js';
 
 const SUBMITTED_BANNER_MS = 5000;
@@ -33,24 +34,33 @@ export default function SmartMatchesPage() {
     useUserLocation({ enabled: nearMeEnabled });
 
   const loadMatches = useCallback(async () => {
-    setIsLoading(true);
+    const cacheKey = matchesCacheKey(scopedReportId);
+    const cached = readListCache(cacheKey);
+
+    // Stale-while-revalidate: render cached matches instantly, refresh in background.
+    if (cached) {
+      setMatches(cached);
+      setIsLoading(false);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
 
     try {
-      if (scopedReportId) {
-        const data = await getMatchesForItem(scopedReportId);
-        const rows = Array.isArray(data?.matches) ? data.matches : [];
-        setMatches(rows.map(mapMatchForCard));
-      } else {
-        const data = await getUserMatches(1, ALL_MATCHES_LIMIT);
-        const rows = Array.isArray(data?.matches) ? data.matches : [];
-        setMatches(rows.map(mapMatchForCard));
-      }
+      const data = scopedReportId
+        ? await getMatchesForItem(scopedReportId)
+        : await getUserMatches(1, ALL_MATCHES_LIMIT);
+      const rows = Array.isArray(data?.matches) ? data.matches : [];
+      const mapped = rows.map(mapMatchForCard);
+      setMatches(mapped);
+      writeListCache(cacheKey, mapped);
     } catch (err) {
-      const message = err?.response?.data?.error || 'Could not load matches';
-      setLoadError(message);
-      setMatches([]);
-      toast.error(message, { autoClose: 4000 });
+      if (!cached) {
+        const message = err?.response?.data?.error || 'Could not load matches';
+        setLoadError(message);
+        setMatches([]);
+        toast.error(message, { autoClose: 4000 });
+      }
     } finally {
       setIsLoading(false);
     }

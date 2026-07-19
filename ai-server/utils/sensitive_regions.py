@@ -119,6 +119,16 @@ def _cnic_match_text(text: str) -> str | None:
     return None
 
 
+def text_matches_cnic(text: str) -> str | None:
+    """Public helper — canonical CNIC when ``text`` contains a 13-digit national ID number."""
+    return _cnic_match_text(text)
+
+
+def detections_contain_cnic_signal(detections_map: dict[str, Any]) -> bool:
+    """True when structured OCR detections include a CNIC number pattern."""
+    return _detections_contain_cnic_signal(detections_map)
+
+
 def _bbox_center_y(bbox: list[int]) -> float:
     return (float(bbox[1]) + float(bbox[3])) / 2.0
 
@@ -311,6 +321,53 @@ def _resolve_document_type_for_labels(
     return "credit_card" if doc == "unknown" else doc
 
 
+def _union_bounding_boxes(boxes: list[list[int]]) -> list[int] | None:
+    valid = [box for box in boxes if isinstance(box, list) and len(box) == 4]
+    if not valid:
+        return None
+    return [
+        min(int(box[0]) for box in valid),
+        min(int(box[1]) for box in valid),
+        max(int(box[2]) for box in valid),
+        max(int(box[3]) for box in valid),
+    ]
+
+
+def _box_area(box: list[int]) -> int:
+    return max(0, int(box[2]) - int(box[0])) * max(0, int(box[3]) - int(box[1]))
+
+
+def _tighten_cnic_region(region: dict[str, Any]) -> dict[str, Any]:
+    """Collapse fragmented CNIC word boxes into one tight strip for precise blur."""
+    boxes = region.get("boundingBoxes") or []
+    if not isinstance(boxes, list) or len(boxes) <= 1:
+        return region
+    union = _union_bounding_boxes(boxes)
+    if not union:
+        return region
+    return {**region, "boundingBoxes": [union]}
+
+
+def _clamp_boxes_to_bounds(
+    boxes: list[list[int]],
+    bounds: list[int] | None,
+) -> list[list[int]]:
+    if not bounds or len(bounds) != 4:
+        return boxes
+    bx1, by1, bx2, by2 = (int(bounds[0]), int(bounds[1]), int(bounds[2]), int(bounds[3]))
+    clamped: list[list[int]] = []
+    for box in boxes:
+        if not isinstance(box, list) or len(box) != 4:
+            continue
+        x1 = max(bx1, min(bx2, int(box[0])))
+        y1 = max(by1, min(by2, int(box[1])))
+        x2 = max(bx1, min(bx2, int(box[2])))
+        y2 = max(by1, min(by2, int(box[3])))
+        if x2 > x1 and y2 > y1:
+            clamped.append([x1, y1, x2, y2])
+    return clamped
+
+
 def build_sensitive_regions_from_detections(
     detections_map: dict[str, Any],
     *,
@@ -319,6 +376,57 @@ def build_sensitive_regions_from_detections(
     """Primary path — structured YOLO + per-crop EasyOCR word boxes."""
     regions: list[dict[str, Any]] = []
     resolved_doc_type = _resolve_document_type_for_labels(detections_map, document_type)
+    is_cnic = _is_cnic_document_context(document_type, resolved_doc_type, detections_map)
+
+    # Identity cards: mask ONLY the ID number — never DOB/expiry YOLO boxes
+    # (those often cover half the card and bleach the image when blurred).
+    if is_cnic:
+        cnic_regions = [
+            _tighten_cnic_region(region)
+            for region in _extract_cnic_regions_from_text_boxes(
+                _collect_detection_text_boxes(detections_map),
+                document_type="cnic",
+            )
+        ]
+        if cnic_regions:
+            return cnic_regions
+
+        card_data = detections_map.get("card_number")
+        if isinstance(card_data, dict):
+            text = str(card_data.get("text") or "").strip()
+            text_boxes = card_data.get("text_boxes") if isinstance(card_data.get("text_boxes"), list) else []
+            bounding_boxes = _boxes_from_text_boxes(text_boxes)
+            field_bbox = card_data.get("bbox")
+            if not bounding_boxes and isinstance(field_bbox, list) and len(field_bbox) == 4:
+                # Last resort: YOLO number box, but reject card-sized detections.
+                # A real CNIC number strip is a thin horizontal band.
+                area = _box_area(field_bbox)
+                width = max(1, int(field_bbox[2]) - int(field_bbox[0]))
+                height = max(1, int(field_bbox[3]) - int(field_bbox[1]))
+                if area > 0 and height <= max(48, width * 0.35):
+                    bounding_boxes = [field_bbox]
+            elif bounding_boxes and isinstance(field_bbox, list) and len(field_bbox) == 4:
+                bounding_boxes = _clamp_boxes_to_bounds(bounding_boxes, field_bbox)
+
+            if text and bounding_boxes:
+                union = _union_bounding_boxes(bounding_boxes)
+                return [
+                    _region(
+                        field="card_number",
+                        document_type="cnic",
+                        text=text_matches_cnic(text) or text,
+                        bounding_boxes=[union] if union else bounding_boxes,
+                        confidence=_confidence_from_text_boxes(
+                            text_boxes,
+                            fallback=combine_field_confidence(
+                                card_data.get("detection_confidence"),
+                                card_data.get("ocr_confidence"),
+                                has_text=True,
+                            ),
+                        ),
+                    )
+                ]
+        return []
 
     for class_name in sorted(_SENSITIVE_FIELD_CLASSES):
         data = detections_map.get(class_name)
@@ -331,10 +439,12 @@ def build_sensitive_regions_from_detections(
 
         text_boxes = data.get("text_boxes") if isinstance(data.get("text_boxes"), list) else []
         bounding_boxes = _boxes_from_text_boxes(text_boxes)
+        field_bbox = data.get("bbox")
         if not bounding_boxes:
-            field_bbox = data.get("bbox")
             if isinstance(field_bbox, list) and len(field_bbox) == 4:
                 bounding_boxes = [field_bbox]
+        elif isinstance(field_bbox, list) and len(field_bbox) == 4:
+            bounding_boxes = _clamp_boxes_to_bounds(bounding_boxes, field_bbox) or bounding_boxes
 
         confidence = _confidence_from_text_boxes(
             text_boxes,
@@ -358,15 +468,6 @@ def build_sensitive_regions_from_detections(
     regions.extend(
         _extract_cvc_regions(detections_map, document_type=resolved_doc_type),
     )
-
-    if _is_cnic_document_context(document_type, resolved_doc_type, detections_map):
-        cnic_regions = _extract_cnic_regions_from_text_boxes(
-            _collect_detection_text_boxes(detections_map),
-            document_type="cnic",
-        )
-        if cnic_regions:
-            regions = [region for region in regions if region.get("field") != "card_number"]
-            regions.extend(cnic_regions)
 
     return regions
 
@@ -418,7 +519,7 @@ def build_sensitive_regions_from_full_image_boxes(
     if doc in _CNIC_DOC_TYPES:
         cnic_regions = _extract_cnic_regions_from_text_boxes(text_boxes, document_type="cnic")
         if cnic_regions:
-            return cnic_regions
+            return [_tighten_cnic_region(region) for region in cnic_regions]
 
     for box in text_boxes:
         if not isinstance(box, dict):
@@ -481,6 +582,6 @@ def build_sensitive_regions_from_full_image_boxes(
     if doc in _CNIC_DOC_TYPES and not regions:
         cnic_regions = _extract_cnic_regions_from_text_boxes(text_boxes, document_type="cnic")
         if cnic_regions:
-            return cnic_regions
+            return [_tighten_cnic_region(region) for region in cnic_regions]
 
     return regions

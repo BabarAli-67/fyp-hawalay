@@ -31,3 +31,14 @@ export function fetchItemImageUrl(itemId) {
   inflightByItemId.set(itemId, promise);
   return promise;
 }
+
+/** Revoke and drop a cached thumbnail after the report is deleted. */
+export function clearCachedItemImage(itemId) {
+  if (!itemId) return;
+  const url = objectUrlByItemId.get(itemId);
+  if (url) {
+    URL.revokeObjectURL(url);
+    objectUrlByItemId.delete(itemId);
+  }
+  inflightByItemId.delete(itemId);
+}

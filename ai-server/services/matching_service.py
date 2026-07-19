@@ -9,8 +9,9 @@ different words (e.g. "black wallet brown strip" vs "brown and black leather wal
 
 Flow: Express saves item → POST /ai/match → filter candidates → similarity score → top matches.
 
-Category is a ranking signal (bonus), not a hard filter — mismatched categories can still match
-when embedding similarity is high.
+Candidates must pass the same-category, geo-radius, date, report-type, and active-status
+rules before cosine similarity is calculated. Final ranking blends semantic similarity
+with geospatial proximity so nearer pins outrank distant ones inside the radius.
 """
 
 from __future__ import annotations
@@ -25,8 +26,10 @@ from bson.errors import InvalidId
 
 logger = logging.getLogger(__name__)
 
-EARTH_RADIUS_METERS = 6_378_100.0
 DEFAULT_CATEGORY_BONUS = 0.10
+# How strongly map distance affects the displayed match percentage.
+# 0.25 means identical location can lift a score by up to ~25 points vs the radius edge.
+DEFAULT_LOCATION_WEIGHT = 0.25
 
 MATCH_CANDIDATE_PROJECTION = {
     "_id": 1,
@@ -43,6 +46,7 @@ MATCH_CANDIDATE_PROJECTION = {
     "reportType": 1,
     "ownerId": 1,
     "imageFileId": 1,
+    "distanceMeters": 1,
 }
 
 
@@ -104,6 +108,37 @@ def _resolve_effective_category(doc: dict[str, Any]) -> str | None:
     return str(category) if category else None
 
 
+def _same_category_query(category: str) -> dict[str, Any]:
+    """
+    Match the persisted effective category, with fallbacks for legacy items that
+    predate ``effectiveCategory`` / ``userCategory``.
+    """
+    return {
+        "$or": [
+            {"effectiveCategory": category},
+            {
+                "effectiveCategory": {"$exists": False},
+                "userCategory": category,
+            },
+            {
+                "effectiveCategory": {"$exists": False},
+                "userCategory": {"$exists": False},
+                "category": category,
+            },
+            # Mongoose may persist optional legacy fields as null.
+            {
+                "effectiveCategory": None,
+                "userCategory": category,
+            },
+            {
+                "effectiveCategory": None,
+                "userCategory": None,
+                "category": category,
+            },
+        ]
+    }
+
+
 def _category_match_bonus(
     source: dict[str, Any],
     candidate: dict[str, Any],
@@ -130,6 +165,39 @@ def _category_match_bonus(
     return bonus_score, had_mismatch
 
 
+def _proximity_factor(distance_meters: float, match_radius_meters: float) -> float:
+    """
+    1.0 = same pin, 0.0 = at the outer $geoNear radius edge.
+
+    Uses a squared falloff so mid-range pins drop faster than near-identical ones.
+    """
+    radius = max(float(match_radius_meters), 1.0)
+    normalized = min(max(float(distance_meters), 0.0) / radius, 1.0)
+    return float(max(0.0, 1.0 - (normalized ** 2)))
+
+
+def _combine_match_score(
+    base_score: float,
+    *,
+    distance_meters: float,
+    match_radius_meters: float,
+    location_weight: float,
+    category_bonus: float = 0.0,
+) -> tuple[float, float, float]:
+    """
+    Blend semantic cosine with geospatial proximity.
+
+    Returns ``(final_score, proximity, location_contribution)``.
+    """
+    weight = min(max(float(location_weight), 0.0), 0.5)
+    proximity = _proximity_factor(distance_meters, match_radius_meters)
+    content_weight = 1.0 - weight
+    location_contribution = weight * proximity
+    blended = (content_weight * float(base_score)) + location_contribution
+    final_score = round(min(max(blended + float(category_bonus), 0.0), 1.0), 4)
+    return final_score, round(proximity, 4), round(location_contribution, 4)
+
+
 class MatchingService:
     def __init__(
         self,
@@ -141,6 +209,7 @@ class MatchingService:
         match_limit: int = 5,
         max_candidates: int = 100,
         category_bonus: float = DEFAULT_CATEGORY_BONUS,
+        location_weight: float = DEFAULT_LOCATION_WEIGHT,
     ) -> None:
         self._db = db
         self._items = db["items"]
@@ -150,10 +219,12 @@ class MatchingService:
         self._match_limit = match_limit
         self._max_candidates = max_candidates
         self._category_bonus = category_bonus
+        self._location_weight = location_weight
         logger.info(
             f"Matching config: max_candidates={self._max_candidates}, "
             f"threshold={self._similarity_threshold}, limit={self._match_limit}, "
-            f"category_bonus={self._category_bonus}"
+            f"category_bonus={self._category_bonus}, "
+            f"location_weight={self._location_weight}"
         )
 
     @property
@@ -161,7 +232,7 @@ class MatchingService:
         return {
             "ready": self._db is not None,
             "module": "matching",
-            "message": "MongoDB hard filters + embedding cosine similarity + category bonus",
+            "message": "MongoDB $geoNear hard filters + embedding cosine + proximity score",
             "config": {
                 "similarity_threshold": self._similarity_threshold,
                 "match_radius_meters": self._match_radius_meters,
@@ -169,6 +240,7 @@ class MatchingService:
                 "match_limit": self._match_limit,
                 "max_candidates": self._max_candidates,
                 "category_bonus": self._category_bonus,
+                "location_weight": self._location_weight,
             },
         }
 
@@ -185,12 +257,14 @@ class MatchingService:
         Hard filters (from MongoDB):
           - opposite reportType (lost ↔ found)
           - active, not deleted
-          - geo radius around source location
+          - same effective category
+          - $geoNear radius around source location
           - date window
           - must have embedding vector
 
-        Soft score: cosine similarity >= threshold, plus category alignment bonus for ranking.
-        Category mismatch does NOT exclude candidates.
+        Score: cosine similarity must clear the threshold first. Final displayed
+        score then blends cosine with $geoNear proximity (closer pins score higher)
+        and an optional same-category ranking bonus.
         """
         result_limit = min(limit if limit is not None else self._match_limit, self._match_limit)
 
@@ -234,20 +308,30 @@ class MatchingService:
                 }
             }
 
+        source_effective = _resolve_effective_category(source)
+        if not source_effective:
+            logger.info("[matching] item=%s has no category — cannot hard-filter", item_id)
+            return {
+                "status": "no_category",
+                "message": "Source item has no category",
+                "item_id": item_id,
+                "matches": [],
+            }
+
         mongo_query: dict[str, Any] = {
             "_id": {"$ne": source_oid},
             "reportType": opposite_type,
             "status": "active",
             "isDeleted": {"$ne": True},
             "embeddingVector": {"$exists": True, "$type": "array", "$ne": []},
+            **_same_category_query(source_effective),
             **date_filter,
         }
 
-        source_effective = _resolve_effective_category(source)
         source_user = _resolve_user_category(source)
         source_ai = _resolve_ai_category(source)
         logger.info(
-            "[matching] item=%s categories user=%s ai=%s effective=%s (no hard category filter)",
+            "[matching] item=%s categories user=%s ai=%s effective=%s (hard filter)",
             item_id,
             source_user,
             source_ai,
@@ -259,22 +343,44 @@ class MatchingService:
             mongo_query["ownerId"] = {"$ne": owner_id}
 
         coords = (source.get("location") or {}).get("coordinates")
-        if isinstance(coords, list) and len(coords) == 2:
-            lng, lat = float(coords[0]), float(coords[1])
-            radius_radians = self._match_radius_meters / EARTH_RADIUS_METERS
-            mongo_query["location"] = {
-                "$geoWithin": {
-                    "$centerSphere": [[lng, lat], radius_radians],
-                }
+        if not isinstance(coords, list) or len(coords) != 2:
+            logger.info("[matching] item=%s has no valid location — cannot run $geoNear", item_id)
+            return {
+                "status": "no_location",
+                "message": "Source item has no valid location",
+                "item_id": item_id,
+                "matches": [],
             }
 
-        cursor = self._items.find(mongo_query, MATCH_CANDIDATE_PROJECTION)
-
+        lng, lat = float(coords[0]), float(coords[1])
+        pipeline = [
+            {
+                "$geoNear": {
+                    "near": {
+                        "type": "Point",
+                        "coordinates": [lng, lat],
+                    },
+                    "distanceField": "distanceMeters",
+                    "maxDistance": self._match_radius_meters,
+                    "spherical": True,
+                    # Item has both location and secondaryLocation 2dsphere
+                    # indexes; select the primary report location explicitly.
+                    "key": "location",
+                    "query": mongo_query,
+                }
+            },
+            {"$project": MATCH_CANDIDATE_PROJECTION},
+            {"$limit": self._max_candidates},
+        ]
+        cursor = self._items.aggregate(pipeline)
         candidates = await cursor.to_list(length=self._max_candidates)
         logger.info(
-            "[matching] item=%s opposite=%s candidates_after_hard_filters=%d",
+            "[matching] item=%s opposite=%s category=%s radius_m=%.0f "
+            "candidates_after_hard_filters=%d",
             item_id,
             opposite_type,
+            source_effective,
+            self._match_radius_meters,
             len(candidates),
         )
 
@@ -287,24 +393,32 @@ class MatchingService:
             if base_score < self._similarity_threshold:
                 continue
 
+            distance_meters = float(doc.get("distanceMeters") or 0.0)
             cat_bonus, cat_mismatch = _category_match_bonus(
                 source,
                 doc,
                 bonus=self._category_bonus,
             )
-            final_score = round(min(base_score + cat_bonus, 1.0), 4)
+            final_score, proximity, location_contribution = _combine_match_score(
+                base_score,
+                distance_meters=distance_meters,
+                match_radius_meters=self._match_radius_meters,
+                location_weight=self._location_weight,
+                category_bonus=cat_bonus,
+            )
 
-            if cat_mismatch:
-                logger.info(
-                    "[matching] category mismatch match candidate=%s source_effective=%s "
-                    "candidate_effective=%s base_score=%.4f bonus=%.2f final=%.4f",
-                    doc["_id"],
-                    source_effective,
-                    _resolve_effective_category(doc),
-                    base_score,
-                    cat_bonus,
-                    final_score,
-                )
+            logger.info(
+                "[matching] candidate=%s base=%.4f distance_m=%.1f proximity=%.3f "
+                "location_contrib=%.3f cat_bonus=%.2f final=%.4f mismatch=%s",
+                doc["_id"],
+                base_score,
+                distance_meters,
+                proximity,
+                location_contribution,
+                cat_bonus,
+                final_score,
+                cat_mismatch,
+            )
 
             scored.append(
                 {
@@ -312,6 +426,8 @@ class MatchingService:
                     "score": final_score,
                     "similarity_score": round(base_score, 4),
                     "category_bonus": round(cat_bonus, 4),
+                    "location_proximity": proximity,
+                    "location_contribution": location_contribution,
                     "category_mismatch": cat_mismatch,
                     "title": doc.get("title"),
                     "category": doc.get("category"),
@@ -319,13 +435,18 @@ class MatchingService:
                     "reportType": doc.get("reportType"),
                     "owner_id": str(doc["ownerId"]) if doc.get("ownerId") else None,
                     "location_name": doc.get("locationName"),
+                    "distance_meters": round(distance_meters, 1),
                     "description": doc.get("description"),
                     "caption": doc.get("caption"),
                     "has_image": bool(doc.get("imageFileId")),
                 }
             )
 
-        scored.sort(key=lambda m: m["score"], reverse=True)
+        # Prefer higher blended score; break ties with nearer pins.
+        scored.sort(
+            key=lambda m: (m["score"], -float(m.get("distance_meters") or 0.0)),
+            reverse=True,
+        )
         top = scored[:result_limit]
 
         return {

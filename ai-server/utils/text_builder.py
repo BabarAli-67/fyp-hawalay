@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from utils.ocr_text_cleaning import clean_text  # re-export for backward compatibility
+from utils.sensitive_regions import detections_contain_cnic_signal, text_matches_cnic
+
+_IDENTITY_DOC_KEYWORDS = re.compile(
+    r"\b(?:cnic|nadra|national\s+id(?:entity)?(?:\s+card)?|identity\s+card|"
+    r"pakistan\s+national|government\s+of\s+pakistan)\b",
+    re.IGNORECASE,
+)
+_PAYMENT_NETWORK_KEYWORDS = re.compile(
+    r"\b(?:visa|mastercard|master\s*card|american\s+express|amex|union\s?pay|"
+    r"debit\s+card|credit\s+card|valid\s+thru|cvv|cvc)\b",
+    re.IGNORECASE,
+)
 
 
 def merge_detection_results(
@@ -131,9 +144,35 @@ def build_enriched_text(
     return joined[:MAX_ENRICHED_TEXT_LEN]
 
 
+def _detection_field_text(detections: dict[str, Any], class_name: str) -> str:
+    data = detections.get(class_name)
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("text") or "").strip()
+
+
+def _detections_haystack(detections: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for data in detections.values():
+        if not isinstance(data, dict):
+            continue
+        text = str(data.get("text") or "").strip()
+        if text:
+            parts.append(text)
+        for box in data.get("text_boxes") or []:
+            if isinstance(box, dict):
+                box_text = str(box.get("text") or "").strip()
+                if box_text:
+                    parts.append(box_text)
+    return " ".join(parts)
+
+
 def resolve_document_type(document_type: str, detections: dict[str, Any]) -> str:
     """
     Resolve ``auto`` to a concrete document type from YOLO/OCR field presence.
+
+    CNIC numbers share the ``card_number`` detection class with payment cards, so
+    identity signals must win before falling back to ``credit_card``.
     """
     normalized = (document_type or "auto").strip().lower()
     if normalized in ("credit_card", "cnic"):
@@ -141,15 +180,32 @@ def resolve_document_type(document_type: str, detections: dict[str, Any]) -> str
     if normalized in ("id", "id_card", "national_id"):
         return "cnic"
 
-    card_signal_fields = (
-        "card_number",
-        "cardholder_name",
-        "card_brand",
-        "expiry_date",
-        "card_boundary",
-    )
-    if any(detections.get(name) for name in card_signal_fields):
+    if detections_contain_cnic_signal(detections):
+        return "cnic"
+
+    haystack = _detections_haystack(detections)
+    if text_matches_cnic(haystack) or _IDENTITY_DOC_KEYWORDS.search(haystack):
+        return "cnic"
+
+    number_text = _detection_field_text(detections, "card_number")
+    brand_text = _detection_field_text(detections, "card_brand")
+    expiry_text = _detection_field_text(detections, "expiry_date")
+    payment_haystack = " ".join([number_text, brand_text, expiry_text, haystack])
+
+    if _PAYMENT_NETWORK_KEYWORDS.search(payment_haystack):
         return "credit_card"
+    if expiry_text and not text_matches_cnic(number_text):
+        return "credit_card"
+    if number_text and not text_matches_cnic(number_text):
+        digits = re.sub(r"\D", "", number_text)
+        # 13 digits → CNIC; 14–19 → typical payment PAN length.
+        if len(digits) == 13:
+            return "cnic"
+        if 14 <= len(digits) <= 19:
+            return "credit_card"
+
+    # Card-shaped boundary alone is ambiguous (CNIC vs payment) — leave unknown
+    # so caption/sensitivity can classify from vision text.
     return "unknown"
 
 
@@ -205,16 +261,26 @@ def build_structured_ocr_payload(
     }
 
 
-def build_suggested_fields(detections: dict[str, Any]) -> dict[str, str | None]:
+def build_suggested_fields(
+    detections: dict[str, Any],
+    *,
+    document_type: str | None = None,
+) -> dict[str, str | None]:
     """Hints for MERN report form autofill (structured fields only — not full descriptions)."""
     name = detections.get("cardholder_name", {}).get("text")
     number = detections.get("card_number", {}).get("text")
     brand = detections.get("card_brand", {}).get("text")
     expiry = detections.get("expiry_date", {}).get("text")
 
+    doc = (document_type or "").strip().lower()
+    if doc in ("cnic", "national_id", "id_card", "id"):
+        suggested_title = "CNIC / ID Card"
+    else:
+        suggested_title = brand or name
+
     distinctive_parts = [p for p in [brand, number, expiry] if p]
     return {
-        "suggested_title": brand or name,
+        "suggested_title": suggested_title,
         "suggested_description": None,
         "suggested_distinctive_features": " | ".join(distinctive_parts) if distinctive_parts else None,
     }

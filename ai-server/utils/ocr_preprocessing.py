@@ -37,7 +37,11 @@ def _fallback_grayscale(crop_bgr: np.ndarray) -> np.ndarray:
     return crop_bgr.astype(np.uint8)
 
 
-def preprocess_for_easyocr(crop_bgr: np.ndarray, *, apply_threshold: bool = False) -> np.ndarray:
+def preprocess_for_easyocr(
+    crop_bgr: np.ndarray,
+    *,
+    apply_threshold: bool = False,
+) -> tuple[np.ndarray, float]:
     """
     Full preprocessing chain for EasyOCR input.
 
@@ -54,16 +58,18 @@ def preprocess_for_easyocr(crop_bgr: np.ndarray, *, apply_threshold: bool = Fals
         apply_threshold: Use adaptive threshold when contrast is very low.
 
     Returns:
-        Single-channel uint8 array ready for ``reader.readtext``.
+        ``(processed_image, scale)`` where ``scale`` is the upscale factor applied
+        to short crops (1.0 when no upscale). EasyOCR boxes must be divided by
+        ``scale`` before mapping back to the original crop / full image.
     """
     if crop_bgr.size == 0:
-        return crop_bgr
+        return crop_bgr, 1.0
 
     try:
         cv2 = _require_cv2()
     except RuntimeError as exc:
         logger.warning("[ocr-preprocess] %s — using fallback grayscale", exc)
-        return _fallback_grayscale(crop_bgr)
+        return _fallback_grayscale(crop_bgr), 1.0
 
     if crop_bgr.ndim == 3:
         gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
@@ -88,6 +94,7 @@ def preprocess_for_easyocr(crop_bgr: np.ndarray, *, apply_threshold: bool = Fals
     sharpened = _unsharp_mask(denoised, cv2)
 
     height, width = sharpened.shape[:2]
+    scale = 1.0
     if height < _MIN_CROP_HEIGHT:
         scale = _MIN_CROP_HEIGHT / max(height, 1)
         sharpened = cv2.resize(
@@ -96,7 +103,7 @@ def preprocess_for_easyocr(crop_bgr: np.ndarray, *, apply_threshold: bool = Fals
             interpolation=cv2.INTER_CUBIC,
         )
 
-    return sharpened
+    return sharpened, float(scale)
 
 
 def _unsharp_mask(gray: np.ndarray, cv2, *, amount: float = 1.2, sigma: float = 1.0) -> np.ndarray:
@@ -108,4 +115,5 @@ def _unsharp_mask(gray: np.ndarray, cv2, *, amount: float = 1.2, sigma: float = 
 
 def preprocess_full_image_for_ocr(image_bgr: np.ndarray) -> np.ndarray:
     """Preprocess a full document image for degraded (no-YOLO) OCR fallback."""
-    return preprocess_for_easyocr(image_bgr, apply_threshold=False)
+    processed, _scale = preprocess_for_easyocr(image_bgr, apply_threshold=False)
+    return processed

@@ -193,6 +193,13 @@ export function normalizeAnalyzeResponse(data) {
       .trim() || null,
     suggestedCategoryHint: (data.suggestedCategoryHint ?? data.suggested_category_hint ?? '').trim() || null,
     ocrDocumentType: (data.ocrDocumentType ?? data.ocr_document_type ?? '').trim() || null,
+    sensitiveDocumentType: (
+      data.sensitiveDocumentType ??
+      data.sensitive_document_type ??
+      ''
+    )
+      .trim() || null,
+    isSensitive: Boolean(data.is_sensitive ?? data.isSensitive),
     models: data.models || {},
     raw: data,
   };
